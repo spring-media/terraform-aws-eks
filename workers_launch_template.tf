@@ -2,16 +2,17 @@
 
 resource "aws_autoscaling_group" "workers_launch_template" {
   count = local.worker_group_launch_template_count
-  name_prefix = join(
-    "-",
-    compact(
-      [
-        aws_eks_cluster.this.name,
-        lookup(var.worker_groups_launch_template[count.index], "name", count.index),
-        lookup(var.worker_groups_launch_template[count.index], "asg_recreate_on_change", local.workers_group_defaults["asg_recreate_on_change"]) ? random_pet.workers_launch_template[count.index].id : ""
-      ]
-    )
-  )
+  name  = "${var.cluster_name}-worker"
+  # name_prefix = join(
+  #   "-",
+  #   compact(
+  #     [
+  #       aws_eks_cluster.this.name,
+  #       lookup(var.worker_groups_launch_template[count.index], "name", count.index),
+  #       lookup(var.worker_groups_launch_template[count.index], "asg_recreate_on_change", local.workers_group_defaults["asg_recreate_on_change"]) ? random_pet.workers_launch_template[count.index].id : ""
+  #     ]
+  #   )
+  # )
   desired_capacity = lookup(
     var.worker_groups_launch_template[count.index],
     "asg_desired_capacity",
@@ -219,11 +220,12 @@ resource "aws_autoscaling_group" "workers_launch_template" {
 
 resource "aws_launch_template" "workers_launch_template" {
   count = local.worker_group_launch_template_count
-  name_prefix = "${aws_eks_cluster.this.name}-${lookup(
-    var.worker_groups_launch_template[count.index],
-    "name",
-    count.index,
-  )}"
+  name  = "${var.cluster_name}-worker"
+  # name_prefix = "${aws_eks_cluster.this.name}-${lookup(
+  #   var.worker_groups_launch_template[count.index],
+  #   "name",
+  #   count.index,
+  # )}"
 
   network_interfaces {
     associate_public_ip_address = lookup(
@@ -401,8 +403,9 @@ resource "random_pet" "workers_launch_template" {
 }
 
 resource "aws_iam_instance_profile" "workers_launch_template" {
-  count       = var.manage_worker_iam_resources ? local.worker_group_launch_template_count : 0
-  name_prefix = aws_eks_cluster.this.name
+  count = var.manage_worker_iam_resources ? local.worker_group_launch_template_count : 0
+  name  = "${var.cluster_name}-worker"
+  #ame_prefix = aws_eks_cluster.this.name
   role = lookup(
     var.worker_groups_launch_template[count.index],
     "iam_role_id",

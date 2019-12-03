@@ -2,16 +2,16 @@
 
 resource "aws_autoscaling_group" "workers" {
   count = local.worker_group_count
-  name_prefix = join(
-    "-",
-    compact(
-      [
-        aws_eks_cluster.this.name,
-        lookup(var.worker_groups[count.index], "name", count.index),
-        lookup(var.worker_groups[count.index], "asg_recreate_on_change", local.workers_group_defaults["asg_recreate_on_change"]) ? random_pet.workers[count.index].id : ""
-      ]
-    )
-  )
+  # name_prefix = join(
+  #   "-",
+  #   compact(
+  #     [
+  #       aws_eks_cluster.this.name,
+  #       lookup(var.worker_groups[count.index], "name", count.index),
+  #       lookup(var.worker_groups[count.index], "asg_recreate_on_change", local.workers_group_defaults["asg_recreate_on_change"]) ? random_pet.workers[count.index].id : ""
+  #     ]
+  #   )
+  # )
   desired_capacity = lookup(
     var.worker_groups[count.index],
     "asg_desired_capacity",
@@ -143,8 +143,8 @@ resource "aws_autoscaling_group" "workers" {
 }
 
 resource "aws_launch_configuration" "workers" {
-  count       = local.worker_group_count
-  name_prefix = "${aws_eks_cluster.this.name}-${lookup(var.worker_groups[count.index], "name", count.index)}"
+  count = local.worker_group_count
+  #name_prefix = "${aws_eks_cluster.this.name}-${lookup(var.worker_groups[count.index], "name", count.index)}"
   associate_public_ip_address = lookup(
     var.worker_groups[count.index],
     "public_ip",
@@ -243,8 +243,8 @@ resource "random_pet" "workers" {
 }
 
 resource "aws_security_group" "workers" {
-  count       = var.worker_create_security_group ? 1 : 0
-  name_prefix = aws_eks_cluster.this.name
+  count = var.worker_create_security_group ? 1 : 0
+  #name_prefix = aws_eks_cluster.this.name
   description = "Security group for all nodes in the cluster."
   vpc_id      = var.vpc_id
   tags = merge(
@@ -312,8 +312,8 @@ resource "aws_security_group_rule" "workers_ingress_cluster_https" {
 }
 
 resource "aws_iam_role" "workers" {
-  count                 = var.manage_worker_iam_resources ? 1 : 0
-  name_prefix           = var.workers_role_name != "" ? null : aws_eks_cluster.this.name
+  count = var.manage_worker_iam_resources ? 1 : 0
+  #name_prefix           = var.workers_role_name != "" ? null : aws_eks_cluster.this.name
   name                  = var.workers_role_name != "" ? var.workers_role_name : null
   assume_role_policy    = data.aws_iam_policy_document.workers_assume_role_policy.json
   permissions_boundary  = var.permissions_boundary
@@ -323,8 +323,8 @@ resource "aws_iam_role" "workers" {
 }
 
 resource "aws_iam_instance_profile" "workers" {
-  count       = var.manage_worker_iam_resources ? local.worker_group_count : 0
-  name_prefix = aws_eks_cluster.this.name
+  count = var.manage_worker_iam_resources ? local.worker_group_count : 0
+  #name_prefix = aws_eks_cluster.this.name
   role = lookup(
     var.worker_groups[count.index],
     "iam_role_id",
@@ -365,8 +365,8 @@ resource "aws_iam_role_policy_attachment" "workers_autoscaling" {
 }
 
 resource "aws_iam_policy" "worker_autoscaling" {
-  count       = var.manage_worker_iam_resources && var.manage_worker_autoscaling_policy ? 1 : 0
-  name_prefix = "eks-worker-autoscaling-${aws_eks_cluster.this.name}"
+  count = var.manage_worker_iam_resources && var.manage_worker_autoscaling_policy ? 1 : 0
+  #name_prefix = "eks-worker-autoscaling-${aws_eks_cluster.this.name}"
   description = "EKS worker node autoscaling policy for cluster ${aws_eks_cluster.this.name}"
   policy      = data.aws_iam_policy_document.worker_autoscaling.json
   path        = var.iam_path
