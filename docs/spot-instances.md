@@ -87,8 +87,6 @@ Launch Template support is a recent addition to both AWS and this module. It mig
   ]
 ```
 
-## Important Notes
+## Important issues
 
-An issue with the cluster-autoscaler: https://github.com/kubernetes/autoscaler/issues/1133
-
-AWS have released their own termination handler now: https://github.com/aws/aws-node-termination-handler
+- https://github.com/kubernetes/autoscaler/issues/1133
