@@ -18,14 +18,17 @@ The role ARN specified in `var.default_iam_role_arn` will be used by default. In
 | additional\_tags | Additional tags to apply to node group | map(string) | Only `var.tags` applied |
 | ami\_release\_version | AMI version of workers | string | Provider default behavior |
 | ami\_type | AMI Type. See Terraform or AWS docs | string | Provider default behavior |
-| ami\_id | ID of custom AMI. If you use a custom AMI, you need to supply bootstrap script via user-data or as AMI built-in. | string | Provider default behavior |
+| ami\_id | ID of custom AMI. If you use a custom AMI, you need to set `ami_is_eks_optimized` | string | Provider default behavior |
+| ami\_is\_eks\_optimized | If the custom AMI is an EKS optimised image, ignored if `ami_id` is not set. If this is `true` then `bootstrap.sh` is called automatically (max pod logic needs to be manually set), if this is `false` you need to provide all the node configuration in `pre_userdata` | bool | `true` |
 | capacity\_type | Type of instance capacity to provision. Options are `ON_DEMAND` and `SPOT` | string | Provider default behavior |
 | create_launch_template | Create and use a default launch template | bool |  `false` |
 | desired\_capacity | Desired number of workers | number | `var.workers_group_defaults[asg_desired_capacity]` |
 | disk\_encrypted | Whether the root disk will be encrypyted. Requires `create_launch_template` to be `true` and `disk_kms_key_id` to be set | bool | false |
 | disk\_kms\_key\_id | KMS Key used to encrypt the root disk. Requires both `create_launch_template` and `disk_encrypted` to be `true` | string | "" |
 | disk\_size | Workers' disk size | number | Provider default behavior |
-| disk\_type | Workers' disk type. Require `create_launch_template` to be `true`| number | `gp3` |
+| disk\_type | Workers' disk type. Require `create_launch_template` to be `true`| string | Provider default behavior |
+| disk\_throughput | Workers' disk throughput. Require `create_launch_template` to be `true` and `disk_type` to be `gp3`| number | Provider default behavior |
+| disk\_iops | Workers' disk IOPS. Require `create_launch_template` to be `true` and `disk_type` to be `gp3`| number | Provider default behavior |
 | ebs\_optimized | Enables/disables EBS optimization. Require `create_launch_template` to be `true` | bool | `true` if defined `instance\_types` are not present in `var.ebs\_optimized\_not\_supported` |
 | enable_monitoring | Enables/disables detailed monitoring. Require `create_launch_template` to be `true`| bool | `true` |
 | eni_delete | Delete the Elastic Network Interface (ENI) on termination (if set to false you will have to manually delete before destroying) | bool | `true` |
@@ -87,6 +90,8 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_cluster_auth_base64"></a> [cluster\_auth\_base64](#input\_cluster\_auth\_base64) | Base64 encoded CA of parent cluster | `string` | `""` | no |
+| <a name="input_cluster_endpoint"></a> [cluster\_endpoint](#input\_cluster\_endpoint) | Endpoint of parent cluster | `string` | `""` | no |
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name of parent cluster | `string` | `""` | no |
 | <a name="input_create_eks"></a> [create\_eks](#input\_create\_eks) | Controls if EKS resources should be created (it affects almost all resources) | `bool` | `true` | no |
 | <a name="input_default_iam_role_arn"></a> [default\_iam\_role\_arn](#input\_default\_iam\_role\_arn) | ARN of the default IAM worker role to use if one is not specified in `var.node_groups` or `var.node_groups_defaults` | `string` | `""` | no |
