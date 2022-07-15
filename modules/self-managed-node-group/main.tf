@@ -43,7 +43,7 @@ module "user_data" {
 ################################################################################
 
 locals {
-  launch_template_name_int = coalesce(var.launch_template_name, "${var.name}-node-group")
+  launch_template_name_int = coalesce(var.launch_template_name, "${var.name}")
 
   security_group_ids = compact(concat([try(aws_security_group.this[0].id, ""), var.cluster_primary_security_group_id], var.vpc_security_group_ids))
 }
@@ -449,7 +449,7 @@ resource "aws_autoscaling_schedule" "this" {
 ################################################################################
 
 locals {
-  security_group_name   = coalesce(var.security_group_name, "${var.name}-node-group")
+  security_group_name   = coalesce(var.security_group_name, "${var.name}")
   create_security_group = var.create && var.create_security_group
 }
 
@@ -503,7 +503,7 @@ resource "aws_security_group_rule" "this" {
 ################################################################################
 
 locals {
-  iam_role_name = coalesce(var.iam_role_name, "${var.name}-node-group")
+  iam_role_name = coalesce(var.iam_role_name, "${var.name}")
 
   iam_role_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
 
