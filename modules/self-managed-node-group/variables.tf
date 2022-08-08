@@ -341,7 +341,7 @@ variable "wait_for_elb_capacity" {
 variable "wait_for_capacity_timeout" {
   description = "A maximum duration that Terraform should wait for ASG instances to be healthy before timing out. (See also Waiting for Capacity below.) Setting this to '0' causes Terraform to skip all Capacity Waiting behavior."
   type        = string
-  default     = "15m"
+  default     = null
 }
 
 variable "default_cooldown" {
