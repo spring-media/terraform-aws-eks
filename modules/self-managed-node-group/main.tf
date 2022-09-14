@@ -467,9 +467,6 @@ resource "aws_security_group" "this" {
 
   tags = merge(
     var.tags,
-    {
-      "Name" = local.security_group_name
-    },
     var.security_group_tags
   )
 
