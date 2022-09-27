@@ -420,8 +420,8 @@ resource "aws_autoscaling_group" "this" {
       desired_capacity, target_group_arns
     ]
     replace_triggered_by = [
-      aws_security_group.this,
-      aws_iam_role.this
+      aws_security_group.this[count.index].id,
+      aws_iam_role.this[count.index].id
     ]
   }
 }
@@ -467,9 +467,6 @@ resource "aws_security_group" "this" {
 
   tags = merge(
     var.tags,
-    {
-      "Name" = local.security_group_name
-    },
     var.security_group_tags
   )
 
