@@ -370,6 +370,63 @@ resource "aws_autoscaling_group" "this" {
             }
           }
         }
+
+        dynamic "override" {
+          for_each = try(length(mixed_instances_policy.value.instance_requirements), 0) > 0 ? [try(mixed_instances_policy.value.instance_requirements, {})] : []
+          content {
+            instance_requirements {
+              dynamic "memory_mib" {
+                for_each = try([override.value.memory_mib], [])
+                content {
+                  min = lookup(memory_mib.value, "min", null)
+                  max = lookup(memory_mib.value, "max", null)
+                }
+              }
+              dynamic "vcpu_count" {
+                for_each = try([override.value.vcpu_count], [])
+                content {
+                  min = lookup(vcpu_count.value, "min", null)
+                  max = lookup(vcpu_count.value, "max", null)
+                }
+              }
+              dynamic "memory_gib_per_vcpu" {
+                for_each = try([override.value.memory_gib_per_vcpu], [])
+                content {
+                  min = lookup(memory_gib_per_vcpu.value, "min", null)
+                  max = lookup(memory_gib_per_vcpu.value, "max", null)
+                }
+              }
+              dynamic "baseline_ebs_bandwidth_mbps" {
+                for_each = try([override.value.baseline_ebs_bandwidth_mbps], [])
+                content {
+                  min = lookup(baseline_ebs_bandwidth_mbps.value, "min", null)
+                  max = lookup(baseline_ebs_bandwidth_mbps.value, "max", null)
+                }
+              }
+              dynamic "total_local_storage_gb" {
+                for_each = try([override.value.total_local_storage_gb], [])
+                content {
+                  min = lookup(total_local_storage_gb.value, "min", null)
+                  max = lookup(total_local_storage_gb.value, "max", null)
+                }
+              }
+              dynamic "network_interface_count" {
+                for_each = try([override.value.network_interface_count], [])
+                content {
+                  min = lookup(network_interface_count.value, "min", null)
+                  max = lookup(network_interface_count.value, "max", null)
+                }
+              }
+
+              excluded_instance_types                          = lookup(override.value, "excluded_instance_types", null)
+              burstable_performance                            = lookup(override.value, "burstable_performance", null)
+              local_storage                                    = lookup(override.value, "local_storage", null)
+              local_storage_types                              = lookup(override.value, "local_storage_types", null)
+              on_demand_max_price_percentage_over_lowest_price = lookup(override.value, "on_demand_max_price_percentage_over_lowest_price", null)
+              spot_max_price_percentage_over_lowest_price      = lookup(override.value, "spot_max_price_percentage_over_lowest_price", null)
+            }
+          }
+        }
       }
     }
   }
