@@ -41,8 +41,7 @@ module "user_data" {
 
 locals {
   launch_template_name_int = coalesce(var.launch_template_name, "${var.name}")
-
-  security_group_ids = compact(concat([try(aws_security_group.this[0].id, ""), var.cluster_primary_security_group_id], var.vpc_security_group_ids))
+  security_group_ids       = compact(concat([try(aws_security_group.this[0].id, ""), var.cluster_primary_security_group_id], var.vpc_security_group_ids))
 }
 
 resource "aws_launch_template" "this" {
@@ -756,7 +755,7 @@ resource "aws_autoscaling_schedule" "this" {
 
   # [Minute] [Hour] [Day_of_Month] [Month_of_Year] [Day_of_Week]
   # Cron examples: https://crontab.guru/examples.html
-  recurrence = lookup(each.value, "recurrence", null)
+  recurrence = try(each.value.recurrence, null)
 }
 
 ################################################################################
@@ -778,6 +777,9 @@ resource "aws_security_group" "this" {
 
   tags = merge(
     var.tags,
+    {
+      "Name" = local.security_group_name
+    },
     var.security_group_tags
   )
 
@@ -815,8 +817,7 @@ resource "aws_security_group_rule" "this" {
 ################################################################################
 
 locals {
-  iam_role_name = coalesce(var.iam_role_name, "${var.name}")
-
+  iam_role_name          = coalesce(var.iam_role_name, "${var.name}-node-group")
   iam_role_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
   cni_policy             = var.cluster_ip_family == "ipv6" ? "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonEKS_CNI_IPv6_Policy" : "${local.iam_role_policy_prefix}/AmazonEKS_CNI_Policy"
 }

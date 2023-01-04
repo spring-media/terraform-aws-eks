@@ -29,16 +29,8 @@ module "user_data" {
 ################################################################################
 
 locals {
-  # There are 4 scenarios here that have to be considered for `use_custom_launch_template`:
-  # 1. `var.create_launch_template = false && var.launch_template_name == ""` => EKS MNG will use its own default LT
-  # 2. `var.create_launch_template = false && var.launch_template_name == "something"` => User provided custom LT will be used
-  # 3. `var.create_launch_template = true && var.launch_template_name == ""` => Custom LT will be used, module will provide a default name
-  # 4. `var.create_launch_template = true && var.launch_template_name == "something"` => Custom LT will be used, LT name is provided by user
-  use_custom_launch_template = var.create_launch_template || var.launch_template_name != ""
-
-  launch_template_name_int = coalesce(var.launch_template_name, "${var.name}")
-
-  security_group_ids = compact(concat([try(aws_security_group.this[0].id, ""), var.cluster_primary_security_group_id], var.vpc_security_group_ids))
+  launch_template_name = coalesce(var.launch_template_name, "${var.name}-eks-node-group")
+  security_group_ids   = compact(concat([var.cluster_primary_security_group_id], var.vpc_security_group_ids))
 }
 
 resource "aws_launch_template" "this" {
@@ -399,64 +391,11 @@ resource "aws_eks_node_group" "this" {
 }
 
 ################################################################################
-# Security Group
-################################################################################
-
-locals {
-  security_group_name   = coalesce(var.security_group_name, "${var.name}")
-  create_security_group = var.create && var.create_security_group
-}
-
-resource "aws_security_group" "this" {
-  count = local.create_security_group ? 1 : 0
-
-  name        = var.security_group_use_name_prefix ? null : local.security_group_name
-  name_prefix = var.security_group_use_name_prefix ? "${local.security_group_name}-" : null
-  description = var.security_group_description
-  vpc_id      = var.vpc_id
-
-  tags = merge(
-    var.tags,
-    { "Name" = local.security_group_name },
-    var.security_group_tags
-  )
-
-  # https://github.com/hashicorp/terraform-provider-aws/issues/2445
-  # https://github.com/hashicorp/terraform-provider-aws/issues/9692
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_security_group_rule" "this" {
-  for_each = { for k, v in var.security_group_rules : k => v if local.create_security_group }
-
-  # Required
-  security_group_id = aws_security_group.this[0].id
-  protocol          = each.value.protocol
-  from_port         = each.value.from_port
-  to_port           = each.value.to_port
-  type              = each.value.type
-
-  # Optional
-  description      = try(each.value.description, null)
-  cidr_blocks      = try(each.value.cidr_blocks, null)
-  ipv6_cidr_blocks = try(each.value.ipv6_cidr_blocks, null)
-  prefix_list_ids  = try(each.value.prefix_list_ids, [])
-  self             = try(each.value.self, null)
-  source_security_group_id = try(
-    each.value.source_security_group_id,
-    try(each.value.source_cluster_security_group, false) ? var.cluster_security_group_id : null
-  )
-}
-
-################################################################################
 # IAM Role
 ################################################################################
 
 locals {
-  iam_role_name = coalesce(var.iam_role_name, "${var.name}")
-
+  iam_role_name          = coalesce(var.iam_role_name, "${var.name}-eks-node-group")
   iam_role_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
   cni_policy             = var.cluster_ip_family == "ipv6" ? "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonEKS_CNI_IPv6_Policy" : "${local.iam_role_policy_prefix}/AmazonEKS_CNI_Policy"
 }
