@@ -118,8 +118,29 @@ module "eks" {
       selectors = [
         { namespace = "karpenter" }
       ]
-    }
-  }
+    },
+  ]
+
+  fargate_profiles = merge(
+    { for i in range(3) :
+      "kube-system-${element(split("-", local.azs[i]), 2)}" => {
+        selectors = [
+          { namespace = "kube-system" }
+        ]
+        # We want to create a profile per AZ for high availability
+        subnet_ids = [element(module.vpc.private_subnets, i)]
+      }
+    },
+    { for i in range(3) :
+      "karpenter-${element(split("-", local.azs[i]), 2)}" => {
+        selectors = [
+          { namespace = "karpenter" }
+        ]
+        # We want to create a profile per AZ for high availability
+        subnet_ids = [element(module.vpc.private_subnets, i)]
+      }
+    },
+  )
 
   tags = merge(local.tags, {
     # NOTE - if creating multiple security groups with this module, only tag the
