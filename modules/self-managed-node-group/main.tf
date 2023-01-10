@@ -729,10 +729,6 @@ resource "aws_autoscaling_group" "this" {
     ignore_changes = [
       desired_capacity, target_group_arns
     ]
-    replace_triggered_by = [
-      aws_security_group.this[count.index].id,
-      aws_iam_role.this[count.index].id
-    ]
   }
 }
 
