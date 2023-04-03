@@ -163,6 +163,7 @@ No modules.
 | <a name="input_irsa_oidc_provider_arn"></a> [irsa\_oidc\_provider\_arn](#input\_irsa\_oidc\_provider\_arn) | OIDC provider arn used in trust policy for IAM role for service accounts | `string` | `""` | no |
 | <a name="input_irsa_path"></a> [irsa\_path](#input\_irsa\_path) | Path of IAM role for service accounts | `string` | `"/"` | no |
 | <a name="input_irsa_permissions_boundary_arn"></a> [irsa\_permissions\_boundary\_arn](#input\_irsa\_permissions\_boundary\_arn) | Permissions boundary ARN to use for IAM role for service accounts | `string` | `null` | no |
+| <a name="input_irsa_policy_name"></a> [irsa\_policy\_name](#input\_irsa\_policy\_name) | Name of IAM policy for service accounts | `string` | `null` | no |
 | <a name="input_irsa_ssm_parameter_arns"></a> [irsa\_ssm\_parameter\_arns](#input\_irsa\_ssm\_parameter\_arns) | List of SSM Parameter ARNs that contain AMI IDs launched by Karpenter | `list(string)` | <pre>[<br>  "arn:aws:ssm:*:*:parameter/aws/service/*"<br>]</pre> | no |
 | <a name="input_irsa_subnet_account_id"></a> [irsa\_subnet\_account\_id](#input\_irsa\_subnet\_account\_id) | Account ID of where the subnets Karpenter will utilize resides. Used when subnets are shared from another account | `string` | `""` | no |
 | <a name="input_irsa_tag_key"></a> [irsa\_tag\_key](#input\_irsa\_tag\_key) | Tag key (`{key = value}`) applied to resources launched by Karpenter through the Karpenter provisioner | `string` | `"karpenter.sh/discovery"` | no |
@@ -172,6 +173,7 @@ No modules.
 | <a name="input_queue_kms_master_key_id"></a> [queue\_kms\_master\_key\_id](#input\_queue\_kms\_master\_key\_id) | The ID of an AWS-managed customer master key (CMK) for Amazon SQS or a custom CMK | `string` | `null` | no |
 | <a name="input_queue_managed_sse_enabled"></a> [queue\_managed\_sse\_enabled](#input\_queue\_managed\_sse\_enabled) | Boolean to enable server-side encryption (SSE) of message content with SQS-owned encryption keys | `bool` | `true` | no |
 | <a name="input_queue_name"></a> [queue\_name](#input\_queue\_name) | Name of the SQS queue | `string` | `null` | no |
+| <a name="input_rule_name_prefix"></a> [rule\_name\_prefix](#input\_rule\_name\_prefix) | Prefix used for all event bridge rules | `string` | `"Karpenter"` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to add to all resources | `map(string)` | `{}` | no |
 
 ## Outputs
