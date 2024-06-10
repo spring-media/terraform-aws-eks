@@ -1,16 +1,56 @@
 data "aws_partition" "current" {}
 data "aws_caller_identity" "current" {}
 
-data "aws_ami" "eks_default" {
-  count = var.create && var.create_launch_template ? 1 : 0
+################################################################################
+# AMI SSM Parameter
+################################################################################
 
-  filter {
-    name   = "name"
-    values = ["amazon-eks-node-${var.cluster_version}-v*"]
+locals {
+  # Just to ensure templating doesn't fail when values are not provided
+  ssm_cluster_version = var.cluster_version != null ? var.cluster_version : ""
+
+  # TODO - Temporary stopgap for backwards compatibility until v21.0
+  ami_type_to_user_data_type = {
+    AL2_x86_64                 = "linux"
+    AL2_x86_64_GPU             = "linux"
+    AL2_ARM_64                 = "linux"
+    BOTTLEROCKET_ARM_64        = "bottlerocket"
+    BOTTLEROCKET_x86_64        = "bottlerocket"
+    BOTTLEROCKET_ARM_64_NVIDIA = "bottlerocket"
+    BOTTLEROCKET_x86_64_NVIDIA = "bottlerocket"
+    WINDOWS_CORE_2019_x86_64   = "windows"
+    WINDOWS_FULL_2019_x86_64   = "windows"
+    WINDOWS_CORE_2022_x86_64   = "windows"
+    WINDOWS_FULL_2022_x86_64   = "windows"
+    AL2023_x86_64_STANDARD     = "al2023"
+    AL2023_ARM_64_STANDARD     = "al2023"
   }
+  # Try to use `ami_type` first, but fall back to current, default behavior
+  # TODO - will be removed in v21.0
+  user_data_type = try(local.ami_type_to_user_data_type[var.ami_type], var.platform)
 
-  most_recent = true
-  owners      = ["amazon"]
+  # Map the AMI type to the respective SSM param path
+  ami_type_to_ssm_param = {
+    AL2_x86_64                 = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2/recommended/image_id"
+    AL2_x86_64_GPU             = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2-gpu/recommended/image_id"
+    AL2_ARM_64                 = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2-arm64/recommended/image_id"
+    BOTTLEROCKET_ARM_64        = "/aws/service/bottlerocket/aws-k8s-${local.ssm_cluster_version}/arm64/latest/image_id"
+    BOTTLEROCKET_x86_64        = "/aws/service/bottlerocket/aws-k8s-${local.ssm_cluster_version}/x86_64/latest/image_id"
+    BOTTLEROCKET_ARM_64_NVIDIA = "/aws/service/bottlerocket/aws-k8s-${local.ssm_cluster_version}-nvidia/arm64/latest/image_id"
+    BOTTLEROCKET_x86_64_NVIDIA = "/aws/service/bottlerocket/aws-k8s-${local.ssm_cluster_version}-nvidia/x86_64/latest/image_id"
+    WINDOWS_CORE_2019_x86_64   = "/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-EKS_Optimized-${local.ssm_cluster_version}/image_id"
+    WINDOWS_FULL_2019_x86_64   = "/aws/service/ami-windows-latest/Windows_Server-2019-English-Core-EKS_Optimized-${local.ssm_cluster_version}/image_id"
+    WINDOWS_CORE_2022_x86_64   = "/aws/service/ami-windows-latest/Windows_Server-2022-English-Full-EKS_Optimized-${local.ssm_cluster_version}/image_id"
+    WINDOWS_FULL_2022_x86_64   = "/aws/service/ami-windows-latest/Windows_Server-2022-English-Core-EKS_Optimized-${local.ssm_cluster_version}/image_id"
+    AL2023_x86_64_STANDARD     = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/standard/recommended/image_id"
+    AL2023_ARM_64_STANDARD     = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/arm64/standard/recommended/image_id"
+  }
+}
+
+data "aws_ssm_parameter" "ami" {
+  count = var.create ? 1 : 0
+
+  name = local.ami_type_to_ssm_param[var.ami_type]
 }
 
 ################################################################################
@@ -21,18 +61,54 @@ module "user_data" {
   source = "../_user_data"
 
   create                    = var.create
-  platform                  = var.platform
+  platform                  = local.user_data_type
+  ami_type                  = var.ami_type
   is_eks_managed_node_group = false
 
-  cluster_name        = var.cluster_name
-  cluster_endpoint    = var.cluster_endpoint
-  cluster_auth_base64 = var.cluster_auth_base64
+  cluster_name               = var.cluster_name
+  cluster_endpoint           = var.cluster_endpoint
+  cluster_auth_base64        = var.cluster_auth_base64
+  cluster_ip_family          = var.cluster_ip_family
+  cluster_service_cidr       = var.cluster_service_cidr
+  additional_cluster_dns_ips = var.additional_cluster_dns_ips
 
   enable_bootstrap_user_data = true
   pre_bootstrap_user_data    = var.pre_bootstrap_user_data
   post_bootstrap_user_data   = var.post_bootstrap_user_data
   bootstrap_extra_args       = var.bootstrap_extra_args
   user_data_template_path    = var.user_data_template_path
+
+  cloudinit_pre_nodeadm  = var.cloudinit_pre_nodeadm
+  cloudinit_post_nodeadm = var.cloudinit_post_nodeadm
+}
+
+################################################################################
+# EFA Support
+################################################################################
+
+data "aws_ec2_instance_type" "this" {
+  count = local.enable_efa_support ? 1 : 0
+
+  instance_type = var.instance_type
+}
+
+locals {
+  enable_efa_support = var.create && var.enable_efa_support && local.instance_type_provided
+
+  instance_type_provided = var.instance_type != ""
+  num_network_cards      = try(data.aws_ec2_instance_type.this[0].maximum_network_cards, 0)
+
+  efa_network_interfaces = [
+    for i in range(local.num_network_cards) : {
+      associate_public_ip_address = false
+      delete_on_termination       = true
+      device_index                = i == 0 ? 0 : 1
+      network_card_index          = i
+      interface_type              = "efa"
+    }
+  ]
+
+  network_interfaces = local.enable_efa_support ? local.efa_network_interfaces : var.network_interfaces
 }
 
 ################################################################################
@@ -42,6 +118,8 @@ module "user_data" {
 locals {
   launch_template_name = coalesce(var.launch_template_name, var.name)
   security_group_ids   = compact(concat([var.cluster_primary_security_group_id], var.vpc_security_group_ids))
+
+  placement = local.enable_efa_support ? { group_name = aws_placement_group.this[0].name } : var.placement
 }
 
 resource "aws_launch_template" "this" {
@@ -148,7 +226,7 @@ resource "aws_launch_template" "this" {
     arn = var.create_iam_instance_profile ? aws_iam_instance_profile.this[0].arn : var.iam_instance_profile_arn
   }
 
-  image_id                             = coalesce(var.ami_id, data.aws_ami.eks_default[0].image_id)
+  image_id                             = coalesce(var.ami_id, nonsensitive(data.aws_ssm_parameter.ami[0].value))
   instance_initiated_shutdown_behavior = var.instance_initiated_shutdown_behavior
 
   dynamic "instance_market_options" {
@@ -285,7 +363,7 @@ resource "aws_launch_template" "this" {
     for_each = length(var.license_specifications) > 0 ? var.license_specifications : {}
 
     content {
-      license_configuration_arn = license_specifications.value.license_configuration_arn
+      license_configuration_arn = license_specification.value.license_configuration_arn
     }
   }
 
@@ -321,7 +399,8 @@ resource "aws_launch_template" "this" {
   name_prefix = var.launch_template_use_name_prefix ? "${local.launch_template_name}-" : null
 
   dynamic "network_interfaces" {
-    for_each = var.network_interfaces
+    for_each = local.network_interfaces
+
     content {
       associate_carrier_ip_address = try(network_interfaces.value.associate_carrier_ip_address, null)
       associate_public_ip_address  = try(network_interfaces.value.associate_public_ip_address, null)
@@ -347,14 +426,14 @@ resource "aws_launch_template" "this" {
   }
 
   dynamic "placement" {
-    for_each = length(var.placement) > 0 ? [var.placement] : []
+    for_each = length(local.placement) > 0 ? [local.placement] : []
 
     content {
       affinity                = try(placement.value.affinity, null)
-      availability_zone       = try(placement.value.availability_zone, null)
-      group_name              = try(placement.value.group_name, null)
-      host_id                 = try(placement.value.host_id, null)
-      host_resource_group_arn = try(placement.value.host_resource_group_arn, null)
+      availability_zone       = lookup(placement.value, "availability_zone", null)
+      group_name              = lookup(placement.value, "group_name", null)
+      host_id                 = lookup(placement.value, "host_id", null)
+      host_resource_group_arn = lookup(placement.value, "host_resource_group_arn", null)
       partition_number        = try(placement.value.partition_number, null)
       spread_domain           = try(placement.value.spread_domain, null)
       tenancy                 = try(placement.value.tenancy, null)
@@ -384,7 +463,7 @@ resource "aws_launch_template" "this" {
 
   update_default_version = var.update_launch_template_default_version
   user_data              = module.user_data.user_data
-  vpc_security_group_ids = length(var.network_interfaces) > 0 ? [] : local.security_group_ids
+  vpc_security_group_ids = length(local.network_interfaces) > 0 ? [] : local.security_group_ids
 
   tags = var.tags
 
@@ -438,6 +517,15 @@ resource "aws_autoscaling_group" "this" {
     }
   }
 
+  dynamic "instance_maintenance_policy" {
+    for_each = length(var.instance_maintenance_policy) > 0 ? [var.instance_maintenance_policy] : []
+
+    content {
+      min_healthy_percentage = instance_maintenance_policy.value.min_healthy_percentage
+      max_healthy_percentage = instance_maintenance_policy.value.max_healthy_percentage
+    }
+  }
+
   dynamic "instance_refresh" {
     for_each = length(var.instance_refresh) > 0 ? [var.instance_refresh] : []
 
@@ -446,11 +534,14 @@ resource "aws_autoscaling_group" "this" {
         for_each = try([instance_refresh.value.preferences], [])
 
         content {
-          checkpoint_delay       = try(preferences.value.checkpoint_delay, null)
-          checkpoint_percentages = try(preferences.value.checkpoint_percentages, null)
-          instance_warmup        = try(preferences.value.instance_warmup, null)
-          min_healthy_percentage = try(preferences.value.min_healthy_percentage, null)
-          skip_matching          = try(preferences.value.skip_matching, null)
+          checkpoint_delay             = try(preferences.value.checkpoint_delay, null)
+          checkpoint_percentages       = try(preferences.value.checkpoint_percentages, null)
+          instance_warmup              = try(preferences.value.instance_warmup, null)
+          max_healthy_percentage       = try(preferences.value.max_healthy_percentage, null)
+          min_healthy_percentage       = try(preferences.value.min_healthy_percentage, null)
+          scale_in_protected_instances = try(preferences.value.scale_in_protected_instances, null)
+          skip_matching                = try(preferences.value.skip_matching, null)
+          standby_instances            = try(preferences.value.standby_instances, null)
         }
       }
 
@@ -527,8 +618,9 @@ resource "aws_autoscaling_group" "this" {
                   }
                 }
 
-                accelerator_types = try(instance_requirements.value.accelerator_types, [])
-                bare_metal        = try(instance_requirements.value.bare_metal, null)
+                accelerator_types      = try(instance_requirements.value.accelerator_types, [])
+                allowed_instance_types = try(instance_requirements.value.allowed_instance_types, null)
+                bare_metal             = try(instance_requirements.value.bare_metal, null)
 
                 dynamic "baseline_ebs_bandwidth_mbps" {
                   for_each = try([instance_requirements.value.baseline_ebs_bandwidth_mbps], [])
@@ -708,7 +800,7 @@ resource "aws_autoscaling_group" "this" {
 
   target_group_arns         = var.target_group_arns
   termination_policies      = var.termination_policies
-  vpc_zone_identifier       = var.subnet_ids
+  vpc_zone_identifier       = local.enable_efa_support ? data.aws_subnets.efa[0].ids : var.subnet_ids
   wait_for_capacity_timeout = var.wait_for_capacity_timeout
   wait_for_elb_capacity     = var.wait_for_elb_capacity
 
@@ -743,6 +835,155 @@ resource "aws_autoscaling_group" "this" {
 }
 
 ################################################################################
+# IAM Role
+################################################################################
+
+locals {
+  create_iam_instance_profile = var.create && var.create_iam_instance_profile
+
+  iam_role_name          = coalesce(var.iam_role_name, "${var.name}-node-group")
+  iam_role_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
+
+  ipv4_cni_policy = { for k, v in {
+    AmazonEKS_CNI_Policy = "${local.iam_role_policy_prefix}/AmazonEKS_CNI_Policy"
+  } : k => v if var.iam_role_attach_cni_policy && var.cluster_ip_family == "ipv4" }
+  ipv6_cni_policy = { for k, v in {
+    AmazonEKS_CNI_IPv6_Policy = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonEKS_CNI_IPv6_Policy"
+  } : k => v if var.iam_role_attach_cni_policy && var.cluster_ip_family == "ipv6" }
+}
+
+data "aws_iam_policy_document" "assume_role_policy" {
+  count = local.create_iam_instance_profile ? 1 : 0
+
+  statement {
+    sid     = "EKSNodeAssumeRole"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "this" {
+  count = local.create_iam_instance_profile ? 1 : 0
+
+  name        = var.iam_role_use_name_prefix ? null : local.iam_role_name
+  name_prefix = var.iam_role_use_name_prefix ? "${local.iam_role_name}-" : null
+  path        = var.iam_role_path
+  description = var.iam_role_description
+
+  assume_role_policy    = data.aws_iam_policy_document.assume_role_policy[0].json
+  permissions_boundary  = var.iam_role_permissions_boundary
+  force_detach_policies = true
+
+  tags = merge(var.tags, var.iam_role_tags)
+}
+
+# Policies attached ref https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eks_node_group
+resource "aws_iam_role_policy_attachment" "this" {
+  for_each = { for k, v in merge(
+    {
+      AmazonEKSWorkerNodePolicy          = "${local.iam_role_policy_prefix}/AmazonEKSWorkerNodePolicy"
+      AmazonEC2ContainerRegistryReadOnly = "${local.iam_role_policy_prefix}/AmazonEC2ContainerRegistryReadOnly"
+    },
+    local.ipv4_cni_policy,
+    local.ipv6_cni_policy
+  ) : k => v if local.create_iam_instance_profile }
+
+  policy_arn = each.value
+  role       = aws_iam_role.this[0].name
+}
+
+resource "aws_iam_role_policy_attachment" "additional" {
+  for_each = { for k, v in var.iam_role_additional_policies : k => v if local.create_iam_instance_profile }
+
+  policy_arn = each.value
+  role       = aws_iam_role.this[0].name
+}
+
+resource "aws_iam_instance_profile" "this" {
+  count = local.create_iam_instance_profile ? 1 : 0
+
+  role = aws_iam_role.this[0].name
+
+  name        = var.iam_role_use_name_prefix ? null : local.iam_role_name
+  name_prefix = var.iam_role_use_name_prefix ? "${local.iam_role_name}-" : null
+  path        = var.iam_role_path
+
+  tags = merge(var.tags, var.iam_role_tags)
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+################################################################################
+# Placement Group
+################################################################################
+
+resource "aws_placement_group" "this" {
+  count = local.enable_efa_support ? 1 : 0
+
+  name     = "${var.cluster_name}-${var.name}"
+  strategy = "cluster"
+
+  tags = var.tags
+}
+
+################################################################################
+# Instance AZ Lookup
+
+# Instances usually used in placement groups w/ EFA are only available in
+# select availability zones. These data sources will cross reference the availability
+# zones supported by the instance type with the subnets provided to ensure only
+# AZs/subnets that are supported are used.
+################################################################################
+
+# Find the availability zones supported by the instance type
+data "aws_ec2_instance_type_offerings" "this" {
+  count = local.enable_efa_support ? 1 : 0
+
+  filter {
+    name   = "instance-type"
+    values = [var.instance_type]
+  }
+
+  location_type = "availability-zone-id"
+}
+
+# Reverse the lookup to find one of the subnets provided based on the availability
+# availability zone ID of the queried instance type (supported)
+data "aws_subnets" "efa" {
+  count = local.enable_efa_support ? 1 : 0
+
+  filter {
+    name   = "subnet-id"
+    values = var.subnet_ids
+  }
+
+  filter {
+    name   = "availability-zone-id"
+    values = data.aws_ec2_instance_type_offerings.this[0].locations
+  }
+}
+
+################################################################################
+# Access Entry
+################################################################################
+
+resource "aws_eks_access_entry" "this" {
+  count = var.create && var.create_access_entry ? 1 : 0
+
+  cluster_name  = var.cluster_name
+  principal_arn = var.create_iam_instance_profile ? aws_iam_role.this[0].arn : var.iam_role_arn
+  type          = local.user_data_type == "windows" ? "EC2_WINDOWS" : "EC2_LINUX"
+
+  tags = var.tags
+}
+
+################################################################################
 # Autoscaling group schedule
 ################################################################################
 
@@ -762,77 +1003,4 @@ resource "aws_autoscaling_schedule" "this" {
   # [Minute] [Hour] [Day_of_Month] [Month_of_Year] [Day_of_Week]
   # Cron examples: https://crontab.guru/examples.html
   recurrence = try(each.value.recurrence, null)
-}
-
-################################################################################
-# IAM Role
-################################################################################
-
-locals {
-  iam_role_name          = coalesce(var.iam_role_name, var.name)
-  iam_role_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
-  cni_policy             = var.cluster_ip_family == "ipv6" ? "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/AmazonEKS_CNI_IPv6_Policy" : "${local.iam_role_policy_prefix}/AmazonEKS_CNI_Policy"
-}
-
-data "aws_iam_policy_document" "assume_role_policy" {
-  count = var.create && var.create_iam_instance_profile ? 1 : 0
-
-  statement {
-    sid     = "EKSNodeAssumeRole"
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["ec2.${data.aws_partition.current.dns_suffix}"]
-    }
-  }
-}
-
-resource "aws_iam_role" "this" {
-  count = var.create && var.create_iam_instance_profile ? 1 : 0
-
-  name        = var.iam_role_use_name_prefix ? null : local.iam_role_name
-  name_prefix = var.iam_role_use_name_prefix ? "${local.iam_role_name}-" : null
-  path        = var.iam_role_path
-  description = var.iam_role_description
-
-  assume_role_policy    = data.aws_iam_policy_document.assume_role_policy[0].json
-  permissions_boundary  = var.iam_role_permissions_boundary
-  force_detach_policies = true
-
-  tags = merge(var.tags, var.iam_role_tags)
-}
-
-resource "aws_iam_role_policy_attachment" "this" {
-  for_each = { for k, v in toset(compact([
-    "${local.iam_role_policy_prefix}/AmazonEKSWorkerNodePolicy",
-    "${local.iam_role_policy_prefix}/AmazonEC2ContainerRegistryReadOnly",
-    var.iam_role_attach_cni_policy ? local.cni_policy : "",
-  ])) : k => v if var.create && var.create_iam_instance_profile }
-
-  policy_arn = each.value
-  role       = aws_iam_role.this[0].name
-}
-
-resource "aws_iam_role_policy_attachment" "additional" {
-  for_each = { for k, v in var.iam_role_additional_policies : k => v if var.create && var.create_iam_instance_profile }
-
-  policy_arn = each.value
-  role       = aws_iam_role.this[0].name
-}
-
-resource "aws_iam_instance_profile" "this" {
-  count = var.create && var.create_iam_instance_profile ? 1 : 0
-
-  role = aws_iam_role.this[0].name
-
-  name        = var.iam_role_use_name_prefix ? null : local.iam_role_name
-  name_prefix = var.iam_role_use_name_prefix ? "${local.iam_role_name}-" : null
-  path        = var.iam_role_path
-
-  tags = merge(var.tags, var.iam_role_tags)
-
-  lifecycle {
-    create_before_destroy = true
-  }
 }
