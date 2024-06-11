@@ -81,9 +81,9 @@ resource "aws_iam_role" "controller" {
   tags = merge(var.tags, var.iam_role_tags)
 }
 
-locals {
+/* locals {
   irsa_tag_values = coalescelist(var.irsa_tag_values, [var.cluster_name])
-}
+} */
 
 data "aws_iam_policy_document" "controller" {
   count = local.create_iam_role ? 1 : 0
@@ -430,12 +430,12 @@ resource "aws_eks_pod_identity_association" "karpenter" {
   tags = var.tags
 }
 
-resource "aws_iam_role_policy_attachment" "irsa_additional" {
+/* resource "aws_iam_role_policy_attachment" "irsa_additional" {
   for_each = { for k, v in var.policies : k => v if local.create_irsa }
 
   role       = aws_iam_role.irsa[0].name
   policy_arn = each.value
-}
+} */
 
 ################################################################################
 # Node Termination Queue
