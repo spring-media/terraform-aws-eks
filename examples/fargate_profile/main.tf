@@ -6,7 +6,7 @@ data "aws_availability_zones" "available" {}
 
 locals {
   name            = "ex-${replace(basename(path.cwd), "_", "-")}"
-  cluster_version = "1.27"
+  cluster_version = "1.29"
   region          = "eu-west-1"
 
   vpc_cidr = "10.0.0.0/16"
@@ -35,7 +35,7 @@ module "eks" {
     vpc-cni    = {}
     coredns = {
       configuration_values = jsonencode({
-        computeType = "Fargate"
+        computeType = "fargate"
       })
     }
   }
@@ -70,32 +70,47 @@ module "eks" {
             Application = "app-wildcard"
           }
         }
-      }
-    },
-    { for i in range(3) :
-      "kube-system-${element(split("-", local.azs[i]), 2)}" => {
-        selectors = [
-          { namespace = "kube-system" }
-        ]
-        # We want to create a profile per AZ for high availability
-        subnet_ids = [element(module.vpc.private_subnets, i)]
-      }
+      ]
 
-      timeouts = {
-        create = "20m"
-        delete = "20m"
+      # Using specific subnets instead of the subnets supplied for the cluster itself
+      subnet_ids = [module.vpc.private_subnets[1]]
+
+      tags = {
+        Owner = "secondary"
       }
     }
-
-    kube_system = {
-      name = "kube-system"
+    kube-system = {
       selectors = [
         { namespace = "kube-system" }
       ]
     }
-  )
+  }
 
   tags = local.tags
+}
+
+################################################################################
+# Sub-Module Usage on Existing/Separate Cluster
+################################################################################
+
+module "fargate_profile" {
+  source = "../../modules/fargate-profile"
+
+  name         = "separate-fargate-profile"
+  cluster_name = module.eks.cluster_name
+
+  subnet_ids = module.vpc.private_subnets
+  selectors = [{
+    namespace = "kube-system"
+  }]
+
+  tags = merge(local.tags, { Separate = "fargate-profile" })
+}
+
+module "disabled_fargate_profile" {
+  source = "../../modules/fargate-profile"
+
+  create = false
 }
 
 ################################################################################
@@ -104,7 +119,7 @@ module "eks" {
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   name = local.name
   cidr = local.vpc_cidr

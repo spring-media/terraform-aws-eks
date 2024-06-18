@@ -2,24 +2,12 @@ provider "aws" {
   region = local.region
 }
 
-provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    # This requires the awscli to be installed locally where Terraform is executed
-    args = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-  }
-}
-
 data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {}
 
 locals {
   name            = "ex-${replace(basename(path.cwd), "_", "-")}"
-  cluster_version = "1.27"
+  cluster_version = "1.29"
   region          = "eu-west-1"
 
   vpc_cidr = "10.0.0.0/16"
@@ -44,15 +32,14 @@ module "eks" {
   cluster_endpoint_public_access = true
 
   # IPV6
-  cluster_ip_family = "ipv6"
-
-  # We are using the IRSA created below for permissions
-  # However, we have to deploy with the policy attached FIRST (when creating a fresh cluster)
-  # and then turn this off after the cluster/node group is created. Without this initial policy,
-  # the VPC CNI fails to assign IPs and nodes cannot join the cluster
-  # See https://github.com/aws/containers-roadmap/issues/1666 for more context
-  # TODO - remove this policy once AWS releases a managed version similar to AmazonEKS_CNI_Policy (IPv4)
+  cluster_ip_family          = "ipv6"
   create_cni_ipv6_iam_policy = true
+
+  enable_cluster_creator_admin_permissions = true
+
+  # Enable EFA support by adding necessary security group rules
+  # to the shared node security group
+  enable_efa_support = true
 
   cluster_addons = {
     coredns = {
@@ -62,9 +49,8 @@ module "eks" {
       most_recent = true
     }
     vpc-cni = {
-      most_recent              = true
-      before_compute           = true
-      service_account_role_arn = module.vpc_cni_irsa.iam_role_arn
+      most_recent    = true
+      before_compute = true
       configuration_values = jsonencode({
         env = {
           # Reference docs https://docs.aws.amazon.com/eks/latest/userguide/cni-increase-ip-addresses.html
@@ -79,18 +65,9 @@ module "eks" {
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.intra_subnets
 
-  manage_aws_auth_configmap = true
-
   eks_managed_node_group_defaults = {
     ami_type       = "AL2_x86_64"
     instance_types = ["m6i.large", "m5.large", "m5n.large", "m5zn.large"]
-
-    # We are using the IRSA created below for permissions
-    # However, we have to deploy with the policy attached FIRST (when creating a fresh cluster)
-    # and then turn this off after the cluster/node group is created. Without this initial policy,
-    # the VPC CNI fails to assign IPs and nodes cannot join the cluster
-    # See https://github.com/aws/containers-roadmap/issues/1666 for more context
-    iam_role_attach_cni_policy = true
   }
 
   eks_managed_node_groups = {
@@ -109,6 +86,31 @@ module "eks" {
       }
     }
 
+    # AL2023 node group utilizing new user data format which utilizes nodeadm
+    # to join nodes to the cluster (instead of /etc/eks/bootstrap.sh)
+    al2023_nodeadm = {
+      ami_type = "AL2023_x86_64_STANDARD"
+
+      use_latest_ami_release_version = true
+
+      cloudinit_pre_nodeadm = [
+        {
+          content_type = "application/node.eks.aws"
+          content      = <<-EOT
+            ---
+            apiVersion: node.eks.aws/v1alpha1
+            kind: NodeConfig
+            spec:
+              kubelet:
+                config:
+                  shutdownGracePeriod: 30s
+                  featureGates:
+                    DisableKubeletCloudCredentialProviders: true
+          EOT
+        }
+      ]
+    }
+
     # Default node group - as provided by AWS EKS using Bottlerocket
     bottlerocket_default = {
       # By default, the module creates a launch template to ensure tags are propagated to instances, etc.,
@@ -116,13 +118,13 @@ module "eks" {
       use_custom_launch_template = false
 
       ami_type = "BOTTLEROCKET_x86_64"
-      platform = "bottlerocket"
     }
 
     # Adds to the AWS provided user data
     bottlerocket_add = {
       ami_type = "BOTTLEROCKET_x86_64"
-      platform = "bottlerocket"
+
+      use_latest_ami_release_version = true
 
       # This will get added to what AWS provides
       bootstrap_extra_args = <<-EOT
@@ -136,7 +138,7 @@ module "eks" {
     bottlerocket_custom = {
       # Current bottlerocket AMI
       ami_id   = data.aws_ami.eks_default_bottlerocket.image_id
-      platform = "bottlerocket"
+      ami_type = "BOTTLEROCKET_x86_64"
 
       # Use module user data template to bootstrap
       enable_bootstrap_user_data = true
@@ -264,34 +266,125 @@ module "eks" {
         additional                         = aws_iam_policy.node_additional.arn
       }
 
-      schedules = {
-        scale-up = {
-          min_size     = 2
-          max_size     = "-1" # Retains current max size
-          desired_size = 2
-          start_time   = "2023-03-05T00:00:00Z"
-          end_time     = "2024-03-05T00:00:00Z"
-          timezone     = "Etc/GMT+0"
-          recurrence   = "0 0 * * *"
-        },
-        scale-down = {
-          min_size     = 0
-          max_size     = "-1" # Retains current max size
-          desired_size = 0
-          start_time   = "2023-03-05T12:00:00Z"
-          end_time     = "2024-03-05T12:00:00Z"
-          timezone     = "Etc/GMT+0"
-          recurrence   = "0 12 * * *"
-        }
+      launch_template_tags = {
+        # enable discovery of autoscaling groups by cluster-autoscaler
+        "k8s.io/cluster-autoscaler/enabled" : true,
+        "k8s.io/cluster-autoscaler/${local.name}" : "owned",
       }
 
       tags = {
         ExtraTag = "EKS managed node group complete example"
       }
     }
+
+    efa = {
+      # Disabling automatic creation due to instance type/quota availability
+      # Can be enabled when appropriate for testing/validation
+      create = false
+
+      ami_type       = "AL2_x86_64_GPU"
+      instance_types = ["trn1n.32xlarge"]
+
+      enable_efa_support      = true
+      pre_bootstrap_user_data = <<-EOT
+        # Mount NVME instance store volumes since they are typically
+        # available on instances that support EFA
+        setup-local-disks raid0
+      EOT
+
+      min_size     = 2
+      max_size     = 2
+      desired_size = 2
+    }
+  }
+
+  access_entries = {
+    # One access entry with a policy associated
+    ex-single = {
+      kubernetes_groups = []
+      principal_arn     = aws_iam_role.this["single"].arn
+
+      policy_associations = {
+        single = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
+          access_scope = {
+            namespaces = ["default"]
+            type       = "namespace"
+          }
+        }
+      }
+    }
+
+    # Example of adding multiple policies to a single access entry
+    ex-multiple = {
+      kubernetes_groups = []
+      principal_arn     = aws_iam_role.this["multiple"].arn
+
+      policy_associations = {
+        ex-one = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy"
+          access_scope = {
+            namespaces = ["default"]
+            type       = "namespace"
+          }
+        }
+        ex-two = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
   }
 
   tags = local.tags
+}
+
+module "disabled_eks" {
+  source = "../.."
+
+  create = false
+}
+
+################################################################################
+# Sub-Module Usage on Existing/Separate Cluster
+################################################################################
+
+module "eks_managed_node_group" {
+  source = "../../modules/eks-managed-node-group"
+
+  name                 = "separate-eks-mng"
+  cluster_name         = module.eks.cluster_name
+  cluster_ip_family    = module.eks.cluster_ip_family
+  cluster_service_cidr = module.eks.cluster_service_cidr
+
+  subnet_ids                        = module.vpc.private_subnets
+  cluster_primary_security_group_id = module.eks.cluster_primary_security_group_id
+  vpc_security_group_ids = [
+    module.eks.node_security_group_id,
+  ]
+
+  ami_type = "BOTTLEROCKET_x86_64"
+
+  # this will get added to what AWS provides
+  bootstrap_extra_args = <<-EOT
+    # extra args added
+    [settings.kernel]
+    lockdown = "integrity"
+
+    [settings.kubernetes.node-labels]
+    "label1" = "foo"
+    "label2" = "bar"
+  EOT
+
+  tags = merge(local.tags, { Separate = "eks-managed-node-group" })
+}
+
+module "disabled_eks_managed_node_group" {
+  source = "../../modules/eks-managed-node-group"
+
+  create = false
 }
 
 ################################################################################
@@ -300,7 +393,7 @@ module "eks" {
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   name = local.name
   cidr = local.vpc_cidr
@@ -333,27 +426,9 @@ module "vpc" {
   tags = local.tags
 }
 
-module "vpc_cni_irsa" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
-
-  role_name_prefix      = "VPC-CNI-IRSA"
-  attach_vpc_cni_policy = true
-  vpc_cni_enable_ipv6   = true
-
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["kube-system:aws-node"]
-    }
-  }
-
-  tags = local.tags
-}
-
 module "ebs_kms_key" {
   source  = "terraform-aws-modules/kms/aws"
-  version = "~> 1.5"
+  version = "~> 2.1"
 
   description = "Customer managed key to encrypt EKS managed node group volumes"
 
@@ -459,51 +534,25 @@ data "aws_ami" "eks_default_bottlerocket" {
   }
 }
 
-################################################################################
-# Tags for the ASG to support cluster-autoscaler scale up from 0
-################################################################################
+resource "aws_iam_role" "this" {
+  for_each = toset(["single", "multiple"])
 
-locals {
+  name = "ex-${each.key}"
 
-  # We need to lookup K8s taint effect from the AWS API value
-  taint_effects = {
-    NO_SCHEDULE        = "NoSchedule"
-    NO_EXECUTE         = "NoExecute"
-    PREFER_NO_SCHEDULE = "PreferNoSchedule"
-  }
+  # Just using for this example
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = "Example"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      },
+    ]
+  })
 
-  cluster_autoscaler_label_tags = merge([
-    for name, group in module.eks.eks_managed_node_groups : {
-      for label_name, label_value in coalesce(group.node_group_labels, {}) : "${name}|label|${label_name}" => {
-        autoscaling_group = group.node_group_autoscaling_group_names[0],
-        key               = "k8s.io/cluster-autoscaler/node-template/label/${label_name}",
-        value             = label_value,
-      }
-    }
-  ]...)
-
-  cluster_autoscaler_taint_tags = merge([
-    for name, group in module.eks.eks_managed_node_groups : {
-      for taint in coalesce(group.node_group_taints, []) : "${name}|taint|${taint.key}" => {
-        autoscaling_group = group.node_group_autoscaling_group_names[0],
-        key               = "k8s.io/cluster-autoscaler/node-template/taint/${taint.key}"
-        value             = "${taint.value}:${local.taint_effects[taint.effect]}"
-      }
-    }
-  ]...)
-
-  cluster_autoscaler_asg_tags = merge(local.cluster_autoscaler_label_tags, local.cluster_autoscaler_taint_tags)
-}
-
-resource "aws_autoscaling_group_tag" "cluster_autoscaler_label_tags" {
-  for_each = local.cluster_autoscaler_asg_tags
-
-  autoscaling_group_name = each.value.autoscaling_group
-
-  tag {
-    key   = each.value.key
-    value = each.value.value
-
-    propagate_at_launch = false
-  }
+  tags = local.tags
 }

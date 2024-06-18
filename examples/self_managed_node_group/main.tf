@@ -2,24 +2,12 @@ provider "aws" {
   region = local.region
 }
 
-provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    # This requires the awscli to be installed locally where Terraform is executed
-    args = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-  }
-}
-
 data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {}
 
 locals {
   name            = "ex-${replace(basename(path.cwd), "_", "-")}"
-  cluster_version = "1.27"
+  cluster_version = "1.29"
   region          = "eu-west-1"
 
   vpc_cidr = "10.0.0.0/16"
@@ -43,6 +31,12 @@ module "eks" {
   cluster_version                = local.cluster_version
   cluster_endpoint_public_access = true
 
+  enable_cluster_creator_admin_permissions = true
+
+  # Enable EFA support by adding necessary security group rules
+  # to the shared node security group
+  enable_efa_support = true
+
   cluster_addons = {
     coredns = {
       most_recent = true
@@ -59,9 +53,12 @@ module "eks" {
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.intra_subnets
 
-  # Self managed node groups will not automatically create the aws-auth configmap so we need to
-  create_aws_auth_configmap = true
-  manage_aws_auth_configmap = true
+  # External encryption key
+  create_kms_key = false
+  cluster_encryption_config = {
+    resources        = ["secrets"]
+    provider_key_arn = module.kms.key_arn
+  }
 
   self_managed_node_group_defaults = {
     # enable discovery of autoscaling groups by cluster-autoscaler
@@ -75,11 +72,34 @@ module "eks" {
     # Default node group - as provisioned by the module defaults
     default_node_group = {}
 
+    # AL2023 node group utilizing new user data format which utilizes nodeadm
+    # to join nodes to the cluster (instead of /etc/eks/bootstrap.sh)
+    al2023_nodeadm = {
+      ami_type = "AL2023_x86_64_STANDARD"
+
+      cloudinit_pre_nodeadm = [
+        {
+          content_type = "application/node.eks.aws"
+          content      = <<-EOT
+            ---
+            apiVersion: node.eks.aws/v1alpha1
+            kind: NodeConfig
+            spec:
+              kubelet:
+                config:
+                  shutdownGracePeriod: 30s
+                  featureGates:
+                    DisableKubeletCloudCredentialProviders: true
+          EOT
+        }
+      ]
+    }
+
     # Bottlerocket node group
     bottlerocket = {
       name = "bottlerocket-self-mng"
 
-      platform      = "bottlerocket"
+      ami_type      = "BOTTLEROCKET_x86_64"
       ami_id        = data.aws_ami.eks_default_bottlerocket.id
       instance_type = "m5.large"
       desired_size  = 2
@@ -141,36 +161,6 @@ module "eks" {
       }
     }
 
-    efa = {
-      min_size     = 1
-      max_size     = 2
-      desired_size = 1
-
-      # aws ec2 describe-instance-types --region eu-west-1 --filters Name=network-info.efa-supported,Values=true --query "InstanceTypes[*].[InstanceType]" --output text | sort
-      instance_type = "c5n.9xlarge"
-
-      post_bootstrap_user_data = <<-EOT
-        # Install EFA
-        curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
-        tar -xf aws-efa-installer-latest.tar.gz && cd aws-efa-installer
-        ./efa_installer.sh -y --minimal
-        fi_info -p efa -t FI_EP_RDM
-
-        # Disable ptrace
-        sysctl -w kernel.yama.ptrace_scope=0
-      EOT
-
-      network_interfaces = [
-        {
-          description                 = "EFA interface example"
-          delete_on_termination       = true
-          device_index                = 0
-          associate_public_ip_address = false
-          interface_type              = "efa"
-        }
-      ]
-    }
-
     # Complete
     complete = {
       name            = "complete-self-mng"
@@ -216,6 +206,58 @@ module "eks" {
         }
       }
 
+      instance_attributes = {
+        name = "instance-attributes"
+
+        min_size     = 1
+        max_size     = 2
+        desired_size = 1
+
+        bootstrap_extra_args = "--kubelet-extra-args '--node-labels=node.kubernetes.io/lifecycle=spot'"
+
+        instance_type = null
+
+        # launch template configuration
+        instance_requirements = {
+          cpu_manufacturers                           = ["intel"]
+          instance_generations                        = ["current", "previous"]
+          spot_max_price_percentage_over_lowest_price = 100
+
+          vcpu_count = {
+            min = 1
+          }
+
+          allowed_instance_types = ["t*", "m*"]
+        }
+
+        use_mixed_instances_policy = true
+        mixed_instances_policy = {
+          instances_distribution = {
+            on_demand_base_capacity                  = 0
+            on_demand_percentage_above_base_capacity = 0
+            on_demand_allocation_strategy            = "lowest-price"
+            spot_allocation_strategy                 = "price-capacity-optimized"
+          }
+
+          # ASG configuration
+          override = [
+            {
+              instance_requirements = {
+                cpu_manufacturers                           = ["intel"]
+                instance_generations                        = ["current", "previous"]
+                spot_max_price_percentage_over_lowest_price = 100
+
+                vcpu_count = {
+                  min = 1
+                }
+
+                allowed_instance_types = ["t*", "m*"]
+              }
+            }
+          ]
+        }
+      }
+
       metadata_options = {
         http_endpoint               = "enabled"
         http_tokens                 = "required"
@@ -235,19 +277,42 @@ module "eks" {
         additional                         = aws_iam_policy.additional.arn
       }
 
-      timeouts = {
-        create = "80m"
-        update = "80m"
-        delete = "80m"
-      }
-
       tags = {
         ExtraTag = "Self managed node group complete example"
       }
     }
+
+    efa = {
+      # Disabling automatic creation due to instance type/quota availability
+      # Can be enabled when appropriate for testing/validation
+      create = false
+
+      ami_type      = "AL2_x86_64_GPU"
+      instance_type = "trn1n.32xlarge"
+
+      enable_efa_support      = true
+      pre_bootstrap_user_data = <<-EOT
+        # Mount NVME instance store volumes since they are typically
+        # available on instances that support EFA
+        setup-local-disks raid0
+      EOT
+
+      min_size     = 2
+      max_size     = 2
+      desired_size = 2
+    }
   }
 
   tags = local.tags
+}
+
+module "disabled_self_managed_node_group" {
+  source = "../../modules/self-managed-node-group"
+
+  create = false
+
+  # Hard requirement
+  cluster_service_cidr = ""
 }
 
 ################################################################################
@@ -256,7 +321,7 @@ module "eks" {
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 4.0"
+  version = "~> 5.0"
 
   name = local.name
   cidr = local.vpc_cidr
@@ -312,7 +377,7 @@ module "key_pair" {
 
 module "ebs_kms_key" {
   source  = "terraform-aws-modules/kms/aws"
-  version = "~> 1.5"
+  version = "~> 2.0"
 
   description = "Customer managed key to encrypt EKS managed node group volumes"
 
@@ -330,6 +395,18 @@ module "ebs_kms_key" {
 
   # Aliases
   aliases = ["eks/${local.name}/ebs"]
+
+  tags = local.tags
+}
+
+module "kms" {
+  source  = "terraform-aws-modules/kms/aws"
+  version = "~> 2.1"
+
+  aliases               = ["eks/${local.name}"]
+  description           = "${local.name} cluster encryption key"
+  enable_default_policy = true
+  key_owners            = [data.aws_caller_identity.current.arn]
 
   tags = local.tags
 }
