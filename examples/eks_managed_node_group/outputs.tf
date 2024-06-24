@@ -47,6 +47,25 @@ output "cluster_primary_security_group_id" {
   value       = module.eks.cluster_primary_security_group_id
 }
 
+output "cluster_service_cidr" {
+  description = "The CIDR block where Kubernetes pod and service IP addresses are assigned from"
+  value       = module.eks.cluster_service_cidr
+}
+
+output "cluster_ip_family" {
+  description = "The IP family used by the cluster (e.g. `ipv4` or `ipv6`)"
+  value       = module.eks.cluster_ip_family
+}
+
+################################################################################
+# Access Entry
+################################################################################
+
+output "access_entries" {
+  description = "Map of access entries created and their attributes"
+  value       = module.eks.access_entries
+}
+
 ################################################################################
 # KMS Key
 ################################################################################
@@ -199,13 +218,4 @@ output "self_managed_node_groups" {
 output "self_managed_node_groups_autoscaling_group_names" {
   description = "List of the autoscaling group names created by self-managed node groups"
   value       = module.eks.self_managed_node_groups_autoscaling_group_names
-}
-
-################################################################################
-# Additional
-################################################################################
-
-output "aws_auth_configmap_yaml" {
-  description = "Formatted yaml output for base aws-auth configmap containing roles used in cluster node groups/fargate profiles"
-  value       = module.eks.aws_auth_configmap_yaml
 }
