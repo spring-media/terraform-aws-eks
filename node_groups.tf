@@ -283,6 +283,8 @@ module "fargate_profile" {
   # To better understand why this `lookup()` logic is required, see:
   # https://github.com/hashicorp/terraform/issues/31646#issuecomment-1217279031
   iam_role_additional_policies = lookup(each.value, "iam_role_additional_policies", lookup(var.fargate_profile_defaults, "iam_role_additional_policies", {}))
+  create_iam_role_policy       = try(each.value.create_iam_role_policy, var.fargate_profile_defaults.create_iam_role_policy, true)
+  iam_role_policy_statements   = try(each.value.iam_role_policy_statements, var.fargate_profile_defaults.iam_role_policy_statements, [])
 
   tags = merge(var.tags, try(each.value.tags, var.fargate_profile_defaults.tags, {}))
 }
@@ -374,9 +376,10 @@ module "eks_managed_node_group" {
   enable_monitoring                  = try(each.value.enable_monitoring, var.eks_managed_node_group_defaults.enable_monitoring, true)
   enable_efa_support                 = try(each.value.enable_efa_support, var.eks_managed_node_group_defaults.enable_efa_support, false)
   create_placement_group             = try(each.value.create_placement_group, var.eks_managed_node_group_defaults.create_placement_group, false)
+  placement                          = try(each.value.placement, var.eks_managed_node_group_defaults.placement, {})
+  placement_group_az                 = try(each.value.placement_group_az, var.eks_managed_node_group_defaults.placement_group_az, null)
   placement_group_strategy           = try(each.value.placement_group_strategy, var.eks_managed_node_group_defaults.placement_group_strategy, "cluster")
   network_interfaces                 = try(each.value.network_interfaces, var.eks_managed_node_group_defaults.network_interfaces, [])
-  placement                          = try(each.value.placement, var.eks_managed_node_group_defaults.placement, {})
   maintenance_options                = try(each.value.maintenance_options, var.eks_managed_node_group_defaults.maintenance_options, {})
   private_dns_name_options           = try(each.value.private_dns_name_options, var.eks_managed_node_group_defaults.private_dns_name_options, {})
 
@@ -393,6 +396,12 @@ module "eks_managed_node_group" {
   # To better understand why this `lookup()` logic is required, see:
   # https://github.com/hashicorp/terraform/issues/31646#issuecomment-1217279031
   iam_role_additional_policies = lookup(each.value, "iam_role_additional_policies", lookup(var.eks_managed_node_group_defaults, "iam_role_additional_policies", {}))
+  create_iam_role_policy       = try(each.value.create_iam_role_policy, var.eks_managed_node_group_defaults.create_iam_role_policy, true)
+  iam_role_policy_statements   = try(each.value.iam_role_policy_statements, var.eks_managed_node_group_defaults.iam_role_policy_statements, [])
+
+  # Autoscaling group schedule
+  create_schedule = try(each.value.create_schedule, var.eks_managed_node_group_defaults.create_schedule, true)
+  schedules       = try(each.value.schedules, var.eks_managed_node_group_defaults.schedules, {})
 
   # Autoscaling group schedule
   create_schedule = try(each.value.create_schedule, var.eks_managed_node_group_defaults.create_schedule, true)
@@ -440,9 +449,13 @@ module "self_managed_node_group" {
   context                   = try(each.value.context, var.self_managed_node_group_defaults.context, null)
 
   target_group_arns         = try(each.value.target_group_arns, var.self_managed_node_group_defaults.target_group_arns, [])
+  create_placement_group    = try(each.value.create_placement_group, var.self_managed_node_group_defaults.create_placement_group, false)
   placement_group           = try(each.value.placement_group, var.self_managed_node_group_defaults.placement_group, null)
+  placement_group_az        = try(each.value.placement_group_az, var.self_managed_node_group_defaults.placement_group_az, null)
   health_check_type         = try(each.value.health_check_type, var.self_managed_node_group_defaults.health_check_type, null)
   health_check_grace_period = try(each.value.health_check_grace_period, var.self_managed_node_group_defaults.health_check_grace_period, null)
+
+  ignore_failed_scaling_activities = try(each.value.ignore_failed_scaling_activities, var.self_managed_node_group_defaults.ignore_failed_scaling_activities, null)
 
   force_delete           = try(each.value.force_delete, var.self_managed_node_group_defaults.force_delete, null)
   force_delete_warm_pool = try(each.value.force_delete_warm_pool, var.self_managed_node_group_defaults.force_delete_warm_pool, null)
@@ -534,6 +547,16 @@ module "self_managed_node_group" {
   # To better understand why this `lookup()` logic is required, see:
   # https://github.com/hashicorp/terraform/issues/31646#issuecomment-1217279031
   iam_role_additional_policies = lookup(each.value, "iam_role_additional_policies", lookup(var.self_managed_node_group_defaults, "iam_role_additional_policies", {}))
+  create_iam_role_policy       = try(each.value.create_iam_role_policy, var.self_managed_node_group_defaults.create_iam_role_policy, true)
+  iam_role_policy_statements   = try(each.value.iam_role_policy_statements, var.self_managed_node_group_defaults.iam_role_policy_statements, [])
+
+  # Access entry
+  create_access_entry = try(each.value.create_access_entry, var.self_managed_node_group_defaults.create_access_entry, true)
+  iam_role_arn        = try(each.value.iam_role_arn, var.self_managed_node_group_defaults.iam_role_arn, null)
+
+  # Autoscaling group schedule
+  create_schedule = try(each.value.create_schedule, var.self_managed_node_group_defaults.create_schedule, true)
+  schedules       = try(each.value.schedules, var.self_managed_node_group_defaults.schedules, {})
 
   # Access entry
   create_access_entry = try(each.value.create_access_entry, var.self_managed_node_group_defaults.create_access_entry, true)

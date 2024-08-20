@@ -256,6 +256,12 @@ variable "placement" {
   default     = {}
 }
 
+variable "create_placement_group" {
+  description = "Determines whether a placement group is created & used by the node group"
+  type        = bool
+  default     = false
+}
+
 variable "private_dns_name_options" {
   description = "The options for the instance hostname. The default values are inherited from the subnet"
   type        = map(string)
@@ -384,6 +390,12 @@ variable "availability_zones" {
   default     = null
 }
 
+variable "placement_group_az" {
+  description = "Availability zone where placement group is created (ex. `eu-west-1c`)"
+  type        = string
+  default     = null
+}
+
 variable "subnet_ids" {
   description = "A list of subnet IDs to launch resources in. Subnets automatically determine which availability zones the group will reside. Conflicts with `availability_zones`"
   type        = list(string)
@@ -406,6 +418,12 @@ variable "desired_size" {
   description = "The number of Amazon EC2 instances that should be running in the autoscaling group"
   type        = number
   default     = 1
+}
+
+variable "ignore_failed_scaling_activities" {
+  description = "Whether to ignore failed Auto Scaling scaling activities while waiting for capacity."
+  type        = bool
+  default     = null
 }
 
 variable "context" {
@@ -646,11 +664,27 @@ variable "iam_role_tags" {
 }
 
 ################################################################################
+# IAM Role Policy
+################################################################################
+
+variable "create_iam_role_policy" {
+  description = "Determines whether an IAM role policy is created or not"
+  type        = bool
+  default     = true
+}
+
+variable "iam_role_policy_statements" {
+  description = "A list of IAM policy [statements](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document#statement) - used for adding specific IAM permissions as needed"
+  type        = any
+  default     = []
+}
+
+################################################################################
 # Access Entry
 ################################################################################
 
 variable "create_access_entry" {
-  description = "Determines whether an access entry is created for the IAM role used by the nodegroup"
+  description = "Determines whether an access entry is created for the IAM role used by the node group"
   type        = bool
   default     = true
 }

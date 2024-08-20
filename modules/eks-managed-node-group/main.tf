@@ -39,6 +39,8 @@ data "aws_ec2_instance_type" "this" {
 }
 
 locals {
+  enable_efa_support = var.create && var.enable_efa_support
+
   efa_instance_type = try(element(var.instance_types, 0), "")
   num_network_cards = try(data.aws_ec2_instance_type.this[0].maximum_network_cards, 0)
 
@@ -52,7 +54,7 @@ locals {
     }
   ]
 
-  network_interfaces = var.enable_efa_support ? local.efa_network_interfaces : var.network_interfaces
+  network_interfaces = local.enable_efa_support ? local.efa_network_interfaces : var.network_interfaces
 }
 
 ################################################################################
@@ -63,7 +65,7 @@ locals {
   launch_template_name = coalesce(var.launch_template_name, var.name)
   security_group_ids   = compact(concat([var.cluster_primary_security_group_id], var.vpc_security_group_ids))
 
-  placement = var.create && (var.enable_efa_support || var.create_placement_group) ? { group_name = aws_placement_group.this[0].name } : var.placement
+  placement = local.create_placement_group ? { group_name = aws_placement_group.this[0].name } : var.placement
 }
 
 resource "aws_launch_template" "this" {
@@ -203,10 +205,11 @@ resource "aws_launch_template" "this" {
     }
   }
 
-  # # Set on node group instead
-  # instance_type = var.launch_template_instance_type
-  kernel_id = var.kernel_id
-  key_name  = var.key_name
+  # Instance type(s) are generally set on the node group,
+  # except when a ML capacity block reseravtion is used
+  instance_type = var.capacity_type == "CAPACITY_BLOCK" ? element(var.instance_types, 0) : null
+  kernel_id     = var.kernel_id
+  key_name      = var.key_name
 
   dynamic "license_specification" {
     for_each = length(var.license_specifications) > 0 ? var.license_specifications : {}
@@ -267,6 +270,7 @@ resource "aws_launch_template" "this" {
       ipv6_prefixes                = try(network_interfaces.value.ipv6_prefixes, [])
       network_card_index           = try(network_interfaces.value.network_card_index, null)
       network_interface_id         = try(network_interfaces.value.network_interface_id, null)
+      primary_ipv6                 = try(network_interfaces.value.primary_ipv6, null)
       private_ip_address           = try(network_interfaces.value.private_ip_address, null)
       # Ref: https://github.com/hashicorp/terraform-provider-aws/issues/4570
       security_groups = compact(concat(try(network_interfaces.value.security_groups, []), local.security_group_ids))
@@ -325,6 +329,7 @@ resource "aws_launch_template" "this" {
   # require permissions on create/destroy that depend on nodes
   depends_on = [
     aws_iam_role_policy_attachment.this,
+    aws_iam_role_policy_attachment.additional,
   ]
 
   lifecycle {
@@ -387,7 +392,7 @@ resource "aws_eks_node_group" "this" {
   # Required
   cluster_name  = var.cluster_name
   node_role_arn = var.create_iam_role ? aws_iam_role.this[0].arn : var.iam_role_arn
-  subnet_ids    = var.enable_efa_support ? data.aws_subnets.efa[0].ids : var.subnet_ids
+  subnet_ids    = local.create_placement_group ? data.aws_subnets.placement_group[0].ids : var.subnet_ids
 
   scaling_config {
     min_size     = var.min_size
@@ -407,8 +412,9 @@ resource "aws_eks_node_group" "this" {
   capacity_type        = var.capacity_type
   disk_size            = var.use_custom_launch_template ? null : var.disk_size # if using a custom LT, set disk size on custom LT or else it will error here
   force_update_version = var.force_update_version
-  instance_types       = var.instance_types
-  labels               = var.labels
+  # ML capacity block reservation requires instance type to be set on the launch template
+  instance_types = var.capacity_type == "CAPACITY_BLOCK" ? null : var.instance_types
+  labels         = var.labels
 
   dynamic "launch_template" {
     for_each = var.use_custom_launch_template ? [1] : []
@@ -536,11 +542,77 @@ resource "aws_iam_role_policy_attachment" "additional" {
 }
 
 ################################################################################
+# IAM Role Policy
+################################################################################
+
+locals {
+  create_iam_role_policy = local.create_iam_role && var.create_iam_role_policy && length(var.iam_role_policy_statements) > 0
+}
+
+data "aws_iam_policy_document" "role" {
+  count = local.create_iam_role_policy ? 1 : 0
+
+  dynamic "statement" {
+    for_each = var.iam_role_policy_statements
+
+    content {
+      sid           = try(statement.value.sid, null)
+      actions       = try(statement.value.actions, null)
+      not_actions   = try(statement.value.not_actions, null)
+      effect        = try(statement.value.effect, null)
+      resources     = try(statement.value.resources, null)
+      not_resources = try(statement.value.not_resources, null)
+
+      dynamic "principals" {
+        for_each = try(statement.value.principals, [])
+
+        content {
+          type        = principals.value.type
+          identifiers = principals.value.identifiers
+        }
+      }
+
+      dynamic "not_principals" {
+        for_each = try(statement.value.not_principals, [])
+
+        content {
+          type        = not_principals.value.type
+          identifiers = not_principals.value.identifiers
+        }
+      }
+
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+
+        content {
+          test     = condition.value.test
+          values   = condition.value.values
+          variable = condition.value.variable
+        }
+      }
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "this" {
+  count = local.create_iam_role_policy ? 1 : 0
+
+  name        = var.iam_role_use_name_prefix ? null : local.iam_role_name
+  name_prefix = var.iam_role_use_name_prefix ? "${local.iam_role_name}-" : null
+  policy      = data.aws_iam_policy_document.role[0].json
+  role        = aws_iam_role.this[0].id
+}
+
+################################################################################
 # Placement Group
 ################################################################################
 
+locals {
+  create_placement_group = var.create && (local.enable_efa_support || var.create_placement_group)
+}
+
 resource "aws_placement_group" "this" {
-  count = var.create && (var.enable_efa_support || var.create_placement_group) ? 1 : 0
+  count = local.create_placement_group ? 1 : 0
 
   name     = "${var.cluster_name}-${var.name}"
   strategy = var.placement_group_strategy
@@ -558,8 +630,11 @@ resource "aws_placement_group" "this" {
 ################################################################################
 
 # Find the availability zones supported by the instance type
+# TODO - remove at next breaking change
+# Force users to be explicit about which AZ to use when using placement groups,
+# with or without EFA support
 data "aws_ec2_instance_type_offerings" "this" {
-  count = var.create && var.enable_efa_support ? 1 : 0
+  count = local.enable_efa_support ? 1 : 0
 
   filter {
     name   = "instance-type"
@@ -571,17 +646,31 @@ data "aws_ec2_instance_type_offerings" "this" {
 
 # Reverse the lookup to find one of the subnets provided based on the availability
 # availability zone ID of the queried instance type (supported)
-data "aws_subnets" "efa" {
-  count = var.create && var.enable_efa_support ? 1 : 0
+data "aws_subnets" "placement_group" {
+  count = local.create_placement_group ? 1 : 0
 
   filter {
     name   = "subnet-id"
     values = var.subnet_ids
   }
 
-  filter {
-    name   = "availability-zone-id"
-    values = data.aws_ec2_instance_type_offerings.this[0].locations
+  # The data source can lookup the first available AZ or you can specify an AZ (next filter)
+  dynamic "filter" {
+    for_each = var.enable_efa_support && var.placement_group_az == null ? [1] : []
+
+    content {
+      name   = "availability-zone-id"
+      values = data.aws_ec2_instance_type_offerings.this[0].locations
+    }
+  }
+
+  dynamic "filter" {
+    for_each = var.placement_group_az != null ? [var.placement_group_az] : []
+
+    content {
+      name   = "availability-zone"
+      values = [filter.value]
+    }
   }
 }
 

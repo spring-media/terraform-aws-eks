@@ -25,6 +25,8 @@ data "aws_iam_policy_document" "controller_assume_role" {
     for_each = var.enable_pod_identity ? [1] : []
 
     content {
+      sid       = "AllowInterruptionQueueActions"
+      resources = [try(aws_sqs_queue.this[0].arn, null)]
       actions = [
         "sts:AssumeRole",
         "sts:TagSession",
@@ -61,208 +63,6 @@ data "aws_iam_policy_document" "controller_assume_role" {
         variable = "${local.irsa_oidc_provider_url}:aud"
         values   = ["sts.amazonaws.com"]
       }
-    }
-  }
-}
-
-resource "aws_iam_role" "controller" {
-  count = local.create_iam_role ? 1 : 0
-
-  name        = var.iam_role_use_name_prefix ? null : var.iam_role_name
-  name_prefix = var.iam_role_use_name_prefix ? "${var.iam_role_name}-" : null
-  path        = var.iam_role_path
-  description = var.iam_role_description
-
-  assume_role_policy    = data.aws_iam_policy_document.controller_assume_role[0].json
-  max_session_duration  = var.iam_role_max_session_duration
-  permissions_boundary  = var.iam_role_permissions_boundary_arn
-  force_detach_policies = true
-
-  tags = merge(var.tags, var.iam_role_tags)
-}
-
-data "aws_iam_policy_document" "controller" {
-  count = local.create_iam_role ? 1 : 0
-
-  statement {
-    sid = "AllowScopedEC2InstanceActions"
-    resources = [
-      "arn:${local.partition}:ec2:*::image/*",
-      "arn:${local.partition}:ec2:*::snapshot/*",
-      "arn:${local.partition}:ec2:*:*:spot-instances-request/*",
-      "arn:${local.partition}:ec2:*:*:security-group/*",
-      "arn:${local.partition}:ec2:*:*:subnet/*",
-      "arn:${local.partition}:ec2:*:*:launch-template/*",
-    ]
-
-    actions = [
-      "ec2:RunInstances",
-      "ec2:CreateFleet"
-    ]
-  }
-
-  statement {
-    sid = "AllowScopedEC2InstanceActionsWithTags"
-    resources = [
-      "arn:${local.partition}:ec2:*:*:fleet/*",
-      "arn:${local.partition}:ec2:*:*:instance/*",
-      "arn:${local.partition}:ec2:*:*:volume/*",
-      "arn:${local.partition}:ec2:*:*:network-interface/*",
-      "arn:${local.partition}:ec2:*:*:launch-template/*",
-      "arn:${local.partition}:ec2:*:*:spot-instances-request/*",
-    ]
-    actions = [
-      "ec2:RunInstances",
-      "ec2:CreateFleet",
-      "ec2:CreateLaunchTemplate"
-    ]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/kubernetes.io/cluster/${var.cluster_name}"
-      values   = ["owned"]
-    }
-
-    condition {
-      test     = "StringLike"
-      variable = "aws:RequestTag/karpenter.sh/nodepool"
-      values   = ["*"]
-    }
-  }
-
-  statement {
-    sid = "AllowScopedResourceCreationTagging"
-    resources = [
-      "arn:${local.partition}:ec2:*:*:fleet/*",
-      "arn:${local.partition}:ec2:*:*:instance/*",
-      "arn:${local.partition}:ec2:*:*:volume/*",
-      "arn:${local.partition}:ec2:*:*:network-interface/*",
-      "arn:${local.partition}:ec2:*:*:launch-template/*",
-      "arn:${local.partition}:ec2:*:*:spot-instances-request/*",
-    ]
-    actions = ["ec2:CreateTags"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/kubernetes.io/cluster/${var.cluster_name}"
-      values   = ["owned"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "ec2:CreateAction"
-      values = [
-        "RunInstances",
-        "CreateFleet",
-        "CreateLaunchTemplate",
-      ]
-    }
-
-    condition {
-      test     = "StringLike"
-      variable = "aws:RequestTag/karpenter.sh/nodepool"
-      values   = ["*"]
-    }
-  }
-
-  statement {
-    sid       = "AllowScopedResourceTagging"
-    resources = ["arn:${local.partition}:ec2:*:*:instance/*"]
-    actions   = ["ec2:CreateTags"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
-      values   = ["owned"]
-    }
-
-    condition {
-      test     = "StringLike"
-      variable = "aws:ResourceTag/karpenter.sh/nodepool"
-      values   = ["*"]
-    }
-
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "aws:TagKeys"
-      values = [
-        "karpenter.sh/nodeclaim",
-        "Name",
-      ]
-    }
-  }
-
-  statement {
-    sid = "AllowScopedDeletion"
-    resources = [
-      "arn:${local.partition}:ec2:*:*:instance/*",
-      "arn:${local.partition}:ec2:*:*:launch-template/*"
-    ]
-
-    actions = [
-      "ec2:TerminateInstances",
-      "ec2:DeleteLaunchTemplate"
-    ]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceTag/kubernetes.io/cluster/${var.cluster_name}"
-      values   = ["owned"]
-    }
-
-    condition {
-      test     = "StringLike"
-      variable = "aws:ResourceTag/karpenter.sh/nodepool"
-      values   = ["*"]
-    }
-  }
-
-  statement {
-    sid       = "AllowRegionalReadActions"
-    resources = ["*"]
-    actions = [
-      "ec2:DescribeAvailabilityZones",
-      "ec2:DescribeImages",
-      "ec2:DescribeInstances",
-      "ec2:DescribeInstanceTypeOfferings",
-      "ec2:DescribeInstanceTypes",
-      "ec2:DescribeLaunchTemplates",
-      "ec2:DescribeSecurityGroups",
-      "ec2:DescribeSpotPriceHistory",
-      "ec2:DescribeSubnets"
-    ]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestedRegion"
-      values   = [local.region]
-    }
-  }
-
-  statement {
-    sid       = "AllowSSMReadActions"
-    resources = coalescelist(var.ami_id_ssm_parameter_arns, ["arn:${local.partition}:ssm:${local.region}::parameter/aws/service/*"])
-    actions   = ["ssm:GetParameter"]
-  }
-
-  statement {
-    sid       = "AllowPricingReadActions"
-    resources = ["*"]
-    actions   = ["pricing:GetProducts"]
-  }
-
-  dynamic "statement" {
-    for_each = local.enable_spot_termination ? [1] : []
-
-    content {
-      sid       = "AllowInterruptionQueueActions"
-      resources = [try(aws_sqs_queue.this[0].arn, null)]
-      actions = [
-        "sqs:DeleteMessage",
-        "sqs:GetQueueAttributes",
-        "sqs:GetQueueUrl",
-        "sqs:ReceiveMessage"
-      ]
     }
   }
 
@@ -385,6 +185,28 @@ data "aws_iam_policy_document" "controller" {
   }
 }
 
+resource "aws_iam_role" "controller" {
+  count = local.create_iam_role ? 1 : 0
+
+  name        = var.iam_role_use_name_prefix ? null : var.iam_role_name
+  name_prefix = var.iam_role_use_name_prefix ? "${var.iam_role_name}-" : null
+  path        = var.iam_role_path
+  description = var.iam_role_description
+
+  assume_role_policy    = data.aws_iam_policy_document.controller_assume_role[0].json
+  max_session_duration  = var.iam_role_max_session_duration
+  permissions_boundary  = var.iam_role_permissions_boundary_arn
+  force_detach_policies = true
+
+  tags = merge(var.tags, var.iam_role_tags)
+}
+
+data "aws_iam_policy_document" "controller" {
+  count = local.create_iam_role ? 1 : 0
+
+  source_policy_documents = var.enable_v1_permissions ? [data.aws_iam_policy_document.v1[0].json] : [data.aws_iam_policy_document.v033[0].json]
+}
+
 resource "aws_iam_policy" "controller" {
   count = local.create_iam_role ? 1 : 0
 
@@ -461,6 +283,27 @@ data "aws_iam_policy_document" "queue" {
       identifiers = [
         "events.amazonaws.com",
         "sqs.amazonaws.com",
+      ]
+    }
+  }
+  statement {
+    sid    = "DenyHTTP"
+    effect = "Deny"
+    actions = [
+      "sqs:*"
+    ]
+    resources = [aws_sqs_queue.this[0].arn]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SecureTransport"
+      values = [
+        "false"
+      ]
+    }
+    principals {
+      type = "*"
+      identifiers = [
+        "*"
       ]
     }
   }

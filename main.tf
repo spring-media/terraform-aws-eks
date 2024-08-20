@@ -27,10 +27,22 @@ locals {
 resource "aws_eks_cluster" "this" {
   count = local.create ? 1 : 0
 
-  name                      = var.cluster_name
-  role_arn                  = local.cluster_role
-  version                   = var.cluster_version
-  enabled_cluster_log_types = var.cluster_enabled_log_types
+  name                          = var.cluster_name
+  role_arn                      = local.cluster_role
+  version                       = var.cluster_version
+  enabled_cluster_log_types     = var.cluster_enabled_log_types
+  bootstrap_self_managed_addons = var.bootstrap_self_managed_addons
+
+  access_config {
+    authentication_mode = var.authentication_mode
+
+    # See access entries below - this is a one time operation from the EKS API.
+    # Instead, we are hardcoding this to false and if users wish to achieve this
+    # same functionality, we will do that through an access entry which can be
+    # enabled or disabled at any time of their choosing using the variable
+    # var.enable_cluster_creator_admin_permissions
+    bootstrap_cluster_creator_admin_permissions = false
+  }
 
   access_config {
     authentication_mode = var.authentication_mode
@@ -83,6 +95,14 @@ resource "aws_eks_cluster" "this" {
     }
   }
 
+  dynamic "upgrade_policy" {
+    for_each = length(var.cluster_upgrade_policy) > 0 ? [var.cluster_upgrade_policy] : []
+
+    content {
+      support_type = try(upgrade_policy.value.support_type, null)
+    }
+  }
+
   tags = merge(
     { terraform-aws-modules = "eks" },
     var.tags,
@@ -115,7 +135,7 @@ resource "aws_ec2_tag" "cluster_primary_security_group" {
   # Ref: https://github.com/terraform-aws-modules/terraform-aws-eks/pull/2006
   # Ref: https://github.com/terraform-aws-modules/terraform-aws-eks/pull/2008
   for_each = { for k, v in merge(var.tags, var.cluster_tags) :
-    k => v if local.create && k != "Name" && var.create_cluster_primary_security_group_tags && v != null
+    k => v if local.create && k != "Name" && var.create_cluster_primary_security_group_tags
   }
 
   resource_id = aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id

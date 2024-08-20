@@ -470,6 +470,7 @@ resource "aws_launch_template" "this" {
   # require permissions on create/destroy that depend on nodes
   depends_on = [
     aws_iam_role_policy_attachment.this,
+    aws_iam_role_policy_attachment.additional,
   ]
 
   lifecycle {
@@ -563,6 +564,8 @@ resource "aws_autoscaling_group" "this" {
   metrics_granularity   = var.metrics_granularity
   min_elb_capacity      = var.min_elb_capacity
   min_size              = var.min_size
+
+  ignore_failed_scaling_activities = var.ignore_failed_scaling_activities
 
   dynamic "mixed_instances_policy" {
     for_each = var.use_mixed_instances_policy ? [var.mixed_instances_policy] : []
@@ -799,7 +802,7 @@ resource "aws_autoscaling_group" "this" {
 
   target_group_arns         = var.target_group_arns
   termination_policies      = var.termination_policies
-  vpc_zone_identifier       = local.enable_efa_support ? data.aws_subnets.efa[0].ids : var.subnet_ids
+  vpc_zone_identifier       = local.enable_efa_support ? data.aws_subnets.placement_group[0].ids : var.subnet_ids
   wait_for_capacity_timeout = var.wait_for_capacity_timeout
   wait_for_elb_capacity     = var.wait_for_elb_capacity
 
@@ -840,7 +843,7 @@ resource "aws_autoscaling_group" "this" {
 locals {
   create_iam_instance_profile = var.create && var.create_iam_instance_profile
 
-  iam_role_name          = coalesce(var.iam_role_name, "${var.name}")
+  iam_role_name          = coalesce(var.iam_role_name, "${var.name}-node-group")
   iam_role_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
 
   ipv4_cni_policy = { for k, v in {
@@ -919,11 +922,77 @@ resource "aws_iam_instance_profile" "this" {
 }
 
 ################################################################################
+# IAM Role Policy
+################################################################################
+
+locals {
+  create_iam_role_policy = local.create_iam_instance_profile && var.create_iam_role_policy && length(var.iam_role_policy_statements) > 0
+}
+
+data "aws_iam_policy_document" "role" {
+  count = local.create_iam_role_policy ? 1 : 0
+
+  dynamic "statement" {
+    for_each = var.iam_role_policy_statements
+
+    content {
+      sid           = try(statement.value.sid, null)
+      actions       = try(statement.value.actions, null)
+      not_actions   = try(statement.value.not_actions, null)
+      effect        = try(statement.value.effect, null)
+      resources     = try(statement.value.resources, null)
+      not_resources = try(statement.value.not_resources, null)
+
+      dynamic "principals" {
+        for_each = try(statement.value.principals, [])
+
+        content {
+          type        = principals.value.type
+          identifiers = principals.value.identifiers
+        }
+      }
+
+      dynamic "not_principals" {
+        for_each = try(statement.value.not_principals, [])
+
+        content {
+          type        = not_principals.value.type
+          identifiers = not_principals.value.identifiers
+        }
+      }
+
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+
+        content {
+          test     = condition.value.test
+          values   = condition.value.values
+          variable = condition.value.variable
+        }
+      }
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "this" {
+  count = local.create_iam_role_policy ? 1 : 0
+
+  name        = var.iam_role_use_name_prefix ? null : local.iam_role_name
+  name_prefix = var.iam_role_use_name_prefix ? "${local.iam_role_name}-" : null
+  policy      = data.aws_iam_policy_document.role[0].json
+  role        = aws_iam_role.this[0].id
+}
+
+################################################################################
 # Placement Group
 ################################################################################
 
+locals {
+  create_placement_group = var.create && (local.enable_efa_support || var.create_placement_group)
+}
+
 resource "aws_placement_group" "this" {
-  count = local.enable_efa_support ? 1 : 0
+  count = local.create_placement_group ? 1 : 0
 
   name     = "${var.cluster_name}-${var.name}"
   strategy = "cluster"
@@ -941,6 +1010,9 @@ resource "aws_placement_group" "this" {
 ################################################################################
 
 # Find the availability zones supported by the instance type
+# TODO - remove at next breaking change
+# Force users to be explicit about which AZ to use when using placement groups,
+# with or without EFA support
 data "aws_ec2_instance_type_offerings" "this" {
   count = local.enable_efa_support ? 1 : 0
 
@@ -954,17 +1026,31 @@ data "aws_ec2_instance_type_offerings" "this" {
 
 # Reverse the lookup to find one of the subnets provided based on the availability
 # availability zone ID of the queried instance type (supported)
-data "aws_subnets" "efa" {
-  count = local.enable_efa_support ? 1 : 0
+data "aws_subnets" "placement_group" {
+  count = local.create_placement_group ? 1 : 0
 
   filter {
     name   = "subnet-id"
     values = var.subnet_ids
   }
 
-  filter {
-    name   = "availability-zone-id"
-    values = data.aws_ec2_instance_type_offerings.this[0].locations
+  # The data source can lookup the first available AZ or you can specify an AZ (next filter)
+  dynamic "filter" {
+    for_each = local.create_placement_group && var.placement_group_az == null ? [1] : []
+
+    content {
+      name   = "availability-zone-id"
+      values = data.aws_ec2_instance_type_offerings.this[0].locations
+    }
+  }
+
+  dynamic "filter" {
+    for_each = var.placement_group_az != null ? [var.placement_group_az] : []
+
+    content {
+      name   = "availability-zone"
+      values = [filter.value]
+    }
   }
 }
 
