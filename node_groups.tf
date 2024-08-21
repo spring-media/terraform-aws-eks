@@ -403,10 +403,6 @@ module "eks_managed_node_group" {
   create_schedule = try(each.value.create_schedule, var.eks_managed_node_group_defaults.create_schedule, true)
   schedules       = try(each.value.schedules, var.eks_managed_node_group_defaults.schedules, {})
 
-  # Autoscaling group schedule
-  create_schedule = try(each.value.create_schedule, var.eks_managed_node_group_defaults.create_schedule, true)
-  schedules       = try(each.value.schedules, var.eks_managed_node_group_defaults.schedules, {})
-
   # Security group
   vpc_security_group_ids            = compact(concat([local.node_security_group_id], try(each.value.vpc_security_group_ids, var.eks_managed_node_group_defaults.vpc_security_group_ids, [])))
   cluster_primary_security_group_id = try(each.value.attach_cluster_primary_security_group, var.eks_managed_node_group_defaults.attach_cluster_primary_security_group, false) ? aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id : null
@@ -558,17 +554,10 @@ module "self_managed_node_group" {
   create_schedule = try(each.value.create_schedule, var.self_managed_node_group_defaults.create_schedule, true)
   schedules       = try(each.value.schedules, var.self_managed_node_group_defaults.schedules, {})
 
-  # Access entry
-  create_access_entry = try(each.value.create_access_entry, var.self_managed_node_group_defaults.create_access_entry, true)
-  iam_role_arn        = try(each.value.iam_role_arn, var.self_managed_node_group_defaults.iam_role_arn, null)
-
-  # Autoscaling group schedule
-  create_schedule = try(each.value.create_schedule, var.self_managed_node_group_defaults.create_schedule, true)
-  schedules       = try(each.value.schedules, var.self_managed_node_group_defaults.schedules, {})
-
   # Security group
   vpc_security_group_ids            = compact(concat([local.node_security_group_id], try(each.value.vpc_security_group_ids, var.self_managed_node_group_defaults.vpc_security_group_ids, [])))
   cluster_primary_security_group_id = try(each.value.attach_cluster_primary_security_group, var.self_managed_node_group_defaults.attach_cluster_primary_security_group, false) ? aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id : null
 
   tags = merge(var.tags, try(each.value.tags, var.self_managed_node_group_defaults.tags, {}))
 }
+

@@ -44,17 +44,6 @@ resource "aws_eks_cluster" "this" {
     bootstrap_cluster_creator_admin_permissions = false
   }
 
-  access_config {
-    authentication_mode = var.authentication_mode
-
-    # See access entries below - this is a one time operation from the EKS API.
-    # Instead, we are hardcoding this to false and if users wish to achieve this
-    # same functionality, we will do that through an access entry which can be
-    # enabled or disabled at any time of their choosing using the variable
-    # var.enable_cluster_creator_admin_permissions
-    bootstrap_cluster_creator_admin_permissions = false
-  }
-
   vpc_config {
     security_group_ids      = compact(distinct(concat(var.cluster_additional_security_group_ids, [local.cluster_security_group_id])))
     subnet_ids              = coalescelist(var.control_plane_subnet_ids, var.subnet_ids)
