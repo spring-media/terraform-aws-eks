@@ -32,7 +32,7 @@ resource "time_sleep" "this" {
   create_duration = var.dataplane_wait_duration
 
   triggers = {
-    cluster_name         = aws_eks_cluster.this[0].name
+    cluster_name         = aws_eks_cluster.this[0].id
     cluster_endpoint     = aws_eks_cluster.this[0].endpoint
     cluster_version      = aws_eks_cluster.this[0].version
     cluster_service_cidr = var.cluster_ip_family == "ipv6" ? try(local.kubernetes_network_config.service_ipv6_cidr, "") : try(local.kubernetes_network_config.service_ipv4_cidr, "")
@@ -375,6 +375,8 @@ module "eks_managed_node_group" {
   metadata_options                   = try(each.value.metadata_options, var.eks_managed_node_group_defaults.metadata_options, local.metadata_options)
   enable_monitoring                  = try(each.value.enable_monitoring, var.eks_managed_node_group_defaults.enable_monitoring, true)
   enable_efa_support                 = try(each.value.enable_efa_support, var.eks_managed_node_group_defaults.enable_efa_support, false)
+  enable_efa_only                    = try(each.value.enable_efa_only, var.eks_managed_node_group_defaults.enable_efa_only, false)
+  efa_indices                        = try(each.value.efa_indices, var.eks_managed_node_group_defaults.efa_indices, [0])
   create_placement_group             = try(each.value.create_placement_group, var.eks_managed_node_group_defaults.create_placement_group, false)
   placement                          = try(each.value.placement, var.eks_managed_node_group_defaults.placement, {})
   placement_group_az                 = try(each.value.placement_group_az, var.eks_managed_node_group_defaults.placement_group_az, null)
@@ -435,6 +437,7 @@ module "self_managed_node_group" {
   min_size                  = try(each.value.min_size, var.self_managed_node_group_defaults.min_size, 0)
   max_size                  = try(each.value.max_size, var.self_managed_node_group_defaults.max_size, 3)
   desired_size              = try(each.value.desired_size, var.self_managed_node_group_defaults.desired_size, 1)
+  desired_size_type         = try(each.value.desired_size_type, var.self_managed_node_group_defaults.desired_size_type, null)
   capacity_rebalance        = try(each.value.capacity_rebalance, var.self_managed_node_group_defaults.capacity_rebalance, null)
   min_elb_capacity          = try(each.value.min_elb_capacity, var.self_managed_node_group_defaults.min_elb_capacity, null)
   wait_for_elb_capacity     = try(each.value.wait_for_elb_capacity, var.self_managed_node_group_defaults.wait_for_elb_capacity, null)
@@ -525,6 +528,8 @@ module "self_managed_node_group" {
   metadata_options                   = try(each.value.metadata_options, var.self_managed_node_group_defaults.metadata_options, local.metadata_options)
   enable_monitoring                  = try(each.value.enable_monitoring, var.self_managed_node_group_defaults.enable_monitoring, true)
   enable_efa_support                 = try(each.value.enable_efa_support, var.self_managed_node_group_defaults.enable_efa_support, false)
+  enable_efa_only                    = try(each.value.enable_efa_only, var.self_managed_node_group_defaults.enable_efa_only, false)
+  efa_indices                        = try(each.value.efa_indices, var.self_managed_node_group_defaults.efa_indices, [0])
   network_interfaces                 = try(each.value.network_interfaces, var.self_managed_node_group_defaults.network_interfaces, [])
   placement                          = try(each.value.placement, var.self_managed_node_group_defaults.placement, {})
   maintenance_options                = try(each.value.maintenance_options, var.self_managed_node_group_defaults.maintenance_options, {})
