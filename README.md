@@ -1,5 +1,20 @@
 # AWS EKS Terraform module
 
+How to sync with the remote - In this example with version/tag 20.30.1:
+
+```shell
+git remote add upstream git@github.com:terraform-aws-modules/terraform-aws-eks.git
+git fetch upstream
+git checkout spacelift
+git pull origin spacelift
+git checkout -b merge_spacelift_v20_30_1
+git merge v20.30.1
+* merge eventiual conflicts *
+git push origin merge_spacelift_v20_30_1
+
+```
+
+
 Terraform module which creates Amazon EKS (Kubernetes) resources
 
 [![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
