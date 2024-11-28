@@ -24,6 +24,8 @@ locals {
     WINDOWS_FULL_2022_x86_64   = "windows"
     AL2023_x86_64_STANDARD     = "al2023"
     AL2023_ARM_64_STANDARD     = "al2023"
+    AL2023_x86_64_NEURON       = "al2023"
+    AL2023_x86_64_NVIDIA       = "al2023"
   }
 
   user_data_type = local.ami_type_to_user_data_type[var.ami_type]
@@ -43,6 +45,8 @@ locals {
     WINDOWS_FULL_2022_x86_64   = "/aws/service/ami-windows-latest/Windows_Server-2022-English-Core-EKS_Optimized-${local.ssm_cluster_version}/image_id"
     AL2023_x86_64_STANDARD     = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/standard/recommended/image_id"
     AL2023_ARM_64_STANDARD     = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/arm64/standard/recommended/image_id"
+    AL2023_x86_64_NEURON       = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/neuron/recommended/image_id"
+    AL2023_x86_64_NVIDIA       = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/nvidia/recommended/image_id"
   }
 }
 
@@ -86,7 +90,7 @@ module "user_data" {
 ################################################################################
 
 data "aws_ec2_instance_type" "this" {
-  count = local.enable_efa_support ? 1 : 0
+  count = var.create && var.enable_efa_support ? 1 : 0
 
   instance_type = var.instance_type
 }
@@ -97,13 +101,14 @@ locals {
   instance_type_provided = var.instance_type != ""
   num_network_cards      = try(data.aws_ec2_instance_type.this[0].maximum_network_cards, 0)
 
+  # Primary network interface must be EFA, remaining can be EFA or EFA-only
   efa_network_interfaces = [
     for i in range(local.num_network_cards) : {
       associate_public_ip_address = false
       delete_on_termination       = true
       device_index                = i == 0 ? 0 : 1
       network_card_index          = i
-      interface_type              = "efa"
+      interface_type              = var.enable_efa_only ? contains(concat([0], var.efa_indices), i) ? "efa" : "efa-only" : "efa"
     }
   ]
 
@@ -417,6 +422,7 @@ resource "aws_launch_template" "this" {
       ipv6_prefixes                = try(network_interfaces.value.ipv6_prefixes, [])
       network_card_index           = try(network_interfaces.value.network_card_index, null)
       network_interface_id         = try(network_interfaces.value.network_interface_id, null)
+      primary_ipv6                 = try(network_interfaces.value.primary_ipv6, null)
       private_ip_address           = try(network_interfaces.value.private_ip_address, null)
       # Ref: https://github.com/hashicorp/terraform-provider-aws/issues/4570
       security_groups = compact(concat(try(network_interfaces.value.security_groups, []), local.security_group_ids))
@@ -497,6 +503,7 @@ resource "aws_autoscaling_group" "this" {
   default_cooldown          = var.default_cooldown
   default_instance_warmup   = var.default_instance_warmup
   desired_capacity          = var.desired_size
+  desired_capacity_type     = var.desired_size_type
   enabled_metrics           = var.enabled_metrics
   force_delete              = var.force_delete
   force_delete_warm_pool    = var.force_delete_warm_pool

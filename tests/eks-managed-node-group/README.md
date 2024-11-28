@@ -12,24 +12,25 @@ $ terraform apply --auto-approve
 
 Note that this example may create resources which cost money. Run `terraform destroy` when you don't need these resources.
 
-<!-- BEGINNING OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- BEGIN_TF_DOCS -->
 ## Requirements
 
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3.2 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.61 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.75 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.61 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.75 |
 
 ## Modules
 
 | Name | Source | Version |
 |------|--------|---------|
+| <a name="module_aws_vpc_cni_ipv6_pod_identity"></a> [aws\_vpc\_cni\_ipv6\_pod\_identity](#module\_aws\_vpc\_cni\_ipv6\_pod\_identity) | terraform-aws-modules/eks-pod-identity/aws | ~> 1.6 |
 | <a name="module_disabled_eks"></a> [disabled\_eks](#module\_disabled\_eks) | ../.. | n/a |
 | <a name="module_disabled_eks_managed_node_group"></a> [disabled\_eks\_managed\_node\_group](#module\_disabled\_eks\_managed\_node\_group) | ../../modules/eks-managed-node-group | n/a |
 | <a name="module_ebs_kms_key"></a> [ebs\_kms\_key](#module\_ebs\_kms\_key) | terraform-aws-modules/kms/aws | ~> 2.1 |
@@ -95,4 +96,4 @@ No inputs.
 | <a name="output_oidc_provider_arn"></a> [oidc\_provider\_arn](#output\_oidc\_provider\_arn) | The ARN of the OIDC Provider if `enable_irsa = true` |
 | <a name="output_self_managed_node_groups"></a> [self\_managed\_node\_groups](#output\_self\_managed\_node\_groups) | Map of attribute maps for all self managed node groups created |
 | <a name="output_self_managed_node_groups_autoscaling_group_names"></a> [self\_managed\_node\_groups\_autoscaling\_group\_names](#output\_self\_managed\_node\_groups\_autoscaling\_group\_names) | List of the autoscaling group names created by self-managed node groups |
-<!-- END OF PRE-COMMIT-TERRAFORM DOCS HOOK -->
+<!-- END_TF_DOCS -->

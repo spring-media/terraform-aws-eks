@@ -44,13 +44,14 @@ locals {
   efa_instance_type = try(element(var.instance_types, 0), "")
   num_network_cards = try(data.aws_ec2_instance_type.this[0].maximum_network_cards, 0)
 
+  # Primary network interface must be EFA, remaining can be EFA or EFA-only
   efa_network_interfaces = [
     for i in range(local.num_network_cards) : {
       associate_public_ip_address = false
       delete_on_termination       = true
       device_index                = i == 0 ? 0 : 1
       network_card_index          = i
-      interface_type              = "efa"
+      interface_type              = var.enable_efa_only ? contains(concat([0], var.efa_indices), i) ? "efa" : "efa-only" : "efa"
     }
   ]
 
@@ -362,6 +363,8 @@ locals {
     WINDOWS_FULL_2022_x86_64   = "/aws/service/ami-windows-latest/Windows_Server-2022-English-Core-EKS_Optimized-${local.ssm_cluster_version}"
     AL2023_x86_64_STANDARD     = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/standard/recommended/release_version"
     AL2023_ARM_64_STANDARD     = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/arm64/standard/recommended/release_version"
+    AL2023_x86_64_NEURON       = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/neuron/recommended/release_version"
+    AL2023_x86_64_NVIDIA       = "/aws/service/eks/optimized-ami/${local.ssm_cluster_version}/amazon-linux-2023/x86_64/nvidia/recommended/release_version"
   }
 
   # The Windows SSM params currently do not have a release version, so we have to get the full output JSON blob and parse out the release version
