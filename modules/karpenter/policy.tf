@@ -697,7 +697,10 @@ data "aws_iam_policy_document" "v1" {
   statement {
     sid       = "AllowInstanceProfileReadActions"
     resources = ["arn:${local.partition}:iam::${local.account_id}:instance-profile/*"]
-    actions   = ["iam:GetInstanceProfile"]
+    actions = [
+      "iam:GetInstanceProfile",
+      "iam:ListInstanceProfiles"
+    ]
   }
 
   statement {
